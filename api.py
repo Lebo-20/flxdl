@@ -27,10 +27,17 @@ async def get_drama_detail(book_id: str):
             if data and isinstance(data, dict):
                 res_data = data.get("data")
                 if res_data:
-                    # Fallback title: Case where batchload title is empty
-                    if not res_data.get("title"):
-                        # Try to find from listing or home
-                        # We don't want to call trending every time, so we only do it as fallback
+                    # Multi-Tier Title Fallback
+                    # Tier 1: check root title
+                    title = res_data.get("title")
+                    
+                    # Tier 2: check first episode title
+                    episodes = res_data.get("list") or res_data.get("episodes") or []
+                    if not title and episodes:
+                        title = episodes[0].get("chapter_title")
+                    
+                    # Tier 3: Try to find from listing or home
+                    if not title:
                         logger.info(f"Title empty in batchload for {book_id}. Trying home fallback...")
                         home_res = await client.get(f"{BASE_URL}/api/home", params={"lang": LANG})
                         if home_res.status_code == 200:
@@ -42,8 +49,12 @@ async def get_drama_detail(book_id: str):
                             
                             for item in items:
                                 if str(item.get("playlet_id")) == str(book_id):
-                                    res_data["title"] = item.get("title")
+                                    title = item.get("title")
+                                    # Use home fallback for intro too!
+                                    res_data["description"] = item.get("introduction") or item.get("intro")
                                     break
+                    
+                    res_data["title"] = title
                     return res_data
                 return data
             return None
