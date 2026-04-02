@@ -12,57 +12,50 @@ COMMON_HEADERS = {
     "Referer": "https://flickreels.net/"
 }
 
-async def download_file(client: httpx.AsyncClient, url: str, path: str, progress_callback=None):
-    """Downloads a single file or HLS stream with necessary headers."""
-    try:
-        # Check if it's an HLS stream (m3u8)te
-        is_hls = ".m3u8" in url.split('?')[0].lower()
-        
-        if is_hls:
-            logger.info(f"Downloading HLS stream with ffmpeg: {url[:60]}...")
-            # Headers for ffmpeg must be provided differently
-            # -headers expects a newline-separated string
-            headers_str = "".join([f"{k}: {v}\r\n" for k, v in COMMON_HEADERS.items()])
+async def download_file(client: httpx.AsyncClient, url: str, path: str, retries=3):
+    """Downloads a single file or HLS stream with necessary headers and retries."""
+    for attempt in range(retries):
+        try:
+            # Check if it's an HLS stream (m3u8)
+            is_hls = ".m3u8" in url.split('?')[0].lower()
             
-            cmd = [
-                "ffmpeg", "-y", 
-                "-user_agent", COMMON_HEADERS["User-Agent"],
-                "-headers", headers_str,
-                "-i", url,
-                "-c", "copy", "-bsf:a", "aac_adtstoasc", 
-                path
-            ]
-            # Use asyncio to run subprocess
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            if process.returncode != 0:
-                logger.error(f"FFmpeg error for {url}: {stderr.decode()[:200]}")
-                return False
-            return True
-        else:
-            # Standard HTTP download
-            async with client.stream("GET", url, headers=COMMON_HEADERS) as response:
-                response.raise_for_status()
+            if is_hls:
+                logger.info(f"Downloading HLS stream (Attempt {attempt+1}): {url[:40]}...")
+                headers_str = "".join([f"{k}: {v}\r\n" for k, v in COMMON_HEADERS.items()])
                 
-                total_size = int(response.headers.get("Content-Length", 0))
-                download_size = 0
-                
-                with open(path, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        f.write(chunk)
-                        download_size += len(chunk)
-                        if progress_callback:
-                            await progress_callback(download_size, total_size)
-            return True
-    except Exception as e:
-        logger.error(f"Failed to download {url}: {e}")
-        return False
+                cmd = [
+                    "ffmpeg", "-y", 
+                    "-user_agent", COMMON_HEADERS["User-Agent"],
+                    "-headers", headers_str,
+                    "-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", 
+                    path
+                ]
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
+                if process.returncode == 0:
+                    return True
+                else:
+                    err_msg = stderr.decode()[:200]
+                    logger.warning(f"FFmpeg error (Attempt {attempt+1}) for {url[:40]}: {err_msg}")
+            else:
+                # Standard HTTP download
+                async with client.stream("GET", url, headers=COMMON_HEADERS, timeout=60) as response:
+                    response.raise_for_status()
+                    with open(path, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+                return True
+        except Exception as e:
+            logger.warning(f"Download error (Attempt {attempt+1}) for {url[:40]}: {e}")
+        
+        if attempt < retries - 1:
+            await asyncio.sleep(2 * (attempt + 1)) # Backoff
+            
+    return False
 
-async def download_all_episodes(episodes, download_dir: str, semaphore_count: int = 5):
+async def download_all_episodes(episodes, download_dir: str, semaphore_count: int = 3):
     """
     Downloads all episodes concurrently.
     """
