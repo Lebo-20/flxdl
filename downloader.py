@@ -43,21 +43,25 @@ async def download_all_episodes(episodes, download_dir: str, semaphore_count: in
             filepath = os.path.join(download_dir, filename)
             
             url = None
+            
+            # Try 'videos' list first (common in these APIs)
             videos = ep.get('videos', [])
             if isinstance(videos, list) and videos:
-                # Prefer highest quality, or just the first in the list 
-                # (API seems to sort them descending by quality usually)
                 url = videos[0].get('url')
                 for video in videos:
                     if video.get('quality') in ['1080P', '720P']:
                         url = video.get('url')
                         break
+            
+            # Fallbacks if 'videos' list is missing or empty
+            if not url:
+                url = ep.get('play_url') or ep.get('playUrl') or ep.get('url')
 
             if not url:
                 logger.error(f"No URL found for episode {ep_num}")
                 return False
                 
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
                 success = await download_file(client, url, filepath)
                 if success:
                     logger.info(f"Downloaded {filename}")

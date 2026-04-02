@@ -1,0 +1,12 @@
+.env
+*.session
+processed.json
+__pycache__/
+test_api.py
+debug_api.py
+dump_trending.py
+trending_full.json
+flxdl_repo/
+*.mp4
+episodes/
+temp/
