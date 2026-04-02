@@ -10,10 +10,10 @@ LANG = 6
 
 async def get_drama_detail(book_id: str):
     """
-    Fetches drama detail from FlickReels API.
-    URL: /drama/:id?lang=6&code=TOKEN
+    Fetches drama detail from FlickReels API via /batchload.
+    URL: /batchload/:id?lang=6&code=TOKEN
     """
-    url = f"{BASE_URL}/drama/{book_id}"
+    url = f"{BASE_URL}/batchload/{book_id}"
     params = {
         "lang": LANG,
         "code": AUTH_CODE
@@ -25,9 +25,10 @@ async def get_drama_detail(book_id: str):
             response.raise_for_status()
             data = response.json()
             if data and isinstance(data, dict):
-                # Handle both {success: true, data: {...}} and direct {...}
-                if "data" in data:
-                    return data["data"]
+                # Handle {status_code: 1, data: {...}} or {success: true, data: {...}}
+                res_data = data.get("data")
+                if res_data:
+                    return res_data
                 return data
             return None
         except Exception as e:
@@ -37,10 +38,16 @@ async def get_drama_detail(book_id: str):
 async def get_all_episodes(book_id: str):
     """
     Extracts episodes from FlickReels API drama detail.
+    FlickReels /batchload uses "list" key for episodes.
     """
     detail = await get_drama_detail(book_id)
-    if detail and "episodes" in detail:
-        return detail["episodes"]
+    if detail:
+        episodes = detail.get("list") or detail.get("episodes") or []
+        # Normalisasi: FlickReels uses 'chapter_num' instead of 'episode'
+        for ep in episodes:
+            if 'chapter_num' in ep and 'episode' not in ep:
+                ep['episode'] = ep['chapter_num']
+        return episodes
     return []
 
 async def get_latest_dramas(pages=1, page_size=20):

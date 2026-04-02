@@ -2,25 +2,62 @@ import os
 import asyncio
 import httpx
 import logging
+import subprocess
 
 logger = logging.getLogger(__name__)
 
+# Common headers to bypass anti-hotlinking
+COMMON_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Referer": "https://flickreels.net/"
+}
+
 async def download_file(client: httpx.AsyncClient, url: str, path: str, progress_callback=None):
-    """Downloads a single file with potential progress tracking."""
+    """Downloads a single file or HLS stream with necessary headers."""
     try:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
+        # Check if it's an HLS stream (m3u8)
+        is_hls = ".m3u8" in url.split('?')[0].lower()
+        
+        if is_hls:
+            logger.info(f"Downloading HLS stream with ffmpeg: {url[:60]}...")
+            # Headers for ffmpeg must be provided differently
+            # -headers expects a newline-separated string
+            headers_str = "".join([f"{k}: {v}\r\n" for k, v in COMMON_HEADERS.items()])
             
-            total_size = int(response.headers.get("Content-Length", 0))
-            download_size = 0
-            
-            with open(path, "wb") as f:
-                async for chunk in response.aiter_bytes():
-                    f.write(chunk)
-                    download_size += len(chunk)
-                    if progress_callback:
-                        await progress_callback(download_size, total_size)
-        return True
+            cmd = [
+                "ffmpeg", "-y", 
+                "-user_agent", COMMON_HEADERS["User-Agent"],
+                "-headers", headers_str,
+                "-i", url,
+                "-c", "copy", "-bsf:a", "aac_adtstoasc", 
+                path
+            ]
+            # Use asyncio to run subprocess
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                logger.error(f"FFmpeg error for {url}: {stderr.decode()[:200]}")
+                return False
+            return True
+        else:
+            # Standard HTTP download
+            async with client.stream("GET", url, headers=COMMON_HEADERS) as response:
+                response.raise_for_status()
+                
+                total_size = int(response.headers.get("Content-Length", 0))
+                download_size = 0
+                
+                with open(path, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        f.write(chunk)
+                        download_size += len(chunk)
+                        if progress_callback:
+                            await progress_callback(download_size, total_size)
+            return True
     except Exception as e:
         logger.error(f"Failed to download {url}: {e}")
         return False
@@ -28,7 +65,6 @@ async def download_file(client: httpx.AsyncClient, url: str, path: str, progress
 async def download_all_episodes(episodes, download_dir: str, semaphore_count: int = 5):
     """
     Downloads all episodes concurrently.
-    episodes: list of dicts with 'episodeNum' and 'playUrl' (or similar based on API)
     """
     os.makedirs(download_dir, exist_ok=True)
     semaphore = asyncio.Semaphore(semaphore_count)
