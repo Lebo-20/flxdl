@@ -6,17 +6,18 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-# Common headers to bypass anti-hotlinking
+# User-suggested headers work best for this CDN
 COMMON_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Referer": "https://flickreels.net/"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://farsunpteltd.com/",
+    "Accept": "*/*",
+    "Connection": "keep-alive"
 }
 
 async def download_file(client: httpx.AsyncClient, url: str, path: str, retries=3):
     """Downloads a single file or HLS stream with necessary headers and retries."""
     for attempt in range(retries):
         try:
-            # Check if it's an HLS stream (m3u8)
             is_hls = ".m3u8" in url.split('?')[0].lower()
             
             if is_hls:
@@ -57,44 +58,45 @@ async def download_file(client: httpx.AsyncClient, url: str, path: str, retries=
 
 async def download_all_episodes(episodes, download_dir: str, semaphore_count: int = 3):
     """
-    Downloads all episodes concurrently.
+    Downloads all episodes concurrently using a persistent session.
     """
     os.makedirs(download_dir, exist_ok=True)
     semaphore = asyncio.Semaphore(semaphore_count)
 
-    tasks = []
-    
-    async def limited_download(ep):
-        async with semaphore:
-            # Sort episodes by episodeNum
-            ep_num = str(ep.get('episode', 'unk')).zfill(3)
-            filename = f"episode_{ep_num}.mp4"
-            filepath = os.path.join(download_dir, filename)
-            
-            url = None
-            
-            # Try 'videos' list first (common in these APIs)
-            videos = ep.get('videos', [])
-            if isinstance(videos, list) and videos:
-                url = videos[0].get('url')
-                for video in videos:
-                    if video.get('quality') in ['1080P', '720P']:
-                        url = video.get('url')
-                        break
-            
-            # Fallbacks if 'videos' list is missing or empty
-            if not url:
-                url = ep.get('play_url') or ep.get('playUrl') or ep.get('url')
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers=COMMON_HEADERS) as client:
+        # Step 0: Warm up the session by hitting the CDN root (user suggestion)
+        try:
+            logger.info("📡 Warming up session with farsunpteltd.com...")
+            await client.get("https://farsunpteltd.com/")
+        except Exception as e:
+            logger.warning(f"📡 Session warmup failed (ignoring): {e}")
 
-            if not url:
-                logger.error(f"No URL found for episode {ep_num}")
-                return False
+        async def limited_download(ep):
+            async with semaphore:
+                ep_num = str(ep.get('episode', 'unk')).zfill(3)
+                filename = f"episode_{ep_num}.mp4"
+                filepath = os.path.join(download_dir, filename)
                 
-            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+                url = None
+                videos = ep.get('videos', [])
+                if isinstance(videos, list) and videos:
+                    url = videos[0].get('url')
+                    for video in videos:
+                        if video.get('quality') in ['1080P', '720P']:
+                            url = video.get('url')
+                            break
+                
+                if not url:
+                    url = ep.get('play_url') or ep.get('playUrl') or ep.get('url')
+
+                if not url:
+                    logger.error(f"No URL found for episode {ep_num}")
+                    return False
+                    
                 success = await download_file(client, url, filepath)
                 if success:
                     logger.info(f"Downloaded {filename}")
                 return success
 
-    results = await asyncio.gather(*(limited_download(ep) for ep in episodes))
-    return all(results)
+        results = await asyncio.gather(*(limited_download(ep) for ep in episodes))
+        return all(results)
