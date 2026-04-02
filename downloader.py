@@ -15,7 +15,7 @@ COMMON_HEADERS = {
 async def download_file(client: httpx.AsyncClient, url: str, path: str, progress_callback=None):
     """Downloads a single file or HLS stream with necessary headers."""
     try:
-        # Check if it's an HLS stream (m3u8)
+        # Check if it's an HLS stream (m3u8)te
         is_hls = ".m3u8" in url.split('?')[0].lower()
         
         if is_hls:

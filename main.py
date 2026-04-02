@@ -150,10 +150,10 @@ async def on_download(event):
     processed_ids.add(book_id)
     save_processed(processed_ids)
     
-    await process_drama_full(book_id, chat_id, status_msg)
+    await process_drama_full(book_id, chat_id, status_msg, title=title)
     BotState.is_processing = False
 
-async def process_drama_full(book_id, chat_id, status_msg=None):
+async def process_drama_full(book_id, chat_id, status_msg=None, title=None):
     """Downloads, merges, and uploads a drama."""
     detail = await get_drama_detail(book_id)
     episodes = await get_all_episodes(book_id)
@@ -162,7 +162,8 @@ async def process_drama_full(book_id, chat_id, status_msg=None):
         if status_msg: await status_msg.edit(f"❌ Detail atau Episode `{book_id}` tidak ditemukan.")
         return False
 
-    title = detail.get("title") or detail.get("bookName") or detail.get("name") or f"Drama_{book_id}"
+    # Use title from argument if provided, otherwise fallback to detail metadata
+    title = title or detail.get("title") or detail.get("bookName") or detail.get("name") or f"Drama_{book_id}"
     description = detail.get("intro") or detail.get("introduction") or detail.get("description") or "No description available."
     poster = detail.get("cover") or detail.get("coverWap") or detail.get("poster") or ""
     
@@ -283,7 +284,7 @@ async def auto_mode_loop():
                 except: pass
                 
                 BotState.is_processing = True
-                success = await process_drama_full(book_id, AUTO_CHANNEL)
+                success = await process_drama_full(book_id, AUTO_CHANNEL, title=title)
                 BotState.is_processing = False
                 
                 if success:

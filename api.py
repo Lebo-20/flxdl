@@ -25,9 +25,25 @@ async def get_drama_detail(book_id: str):
             response.raise_for_status()
             data = response.json()
             if data and isinstance(data, dict):
-                # Handle {status_code: 1, data: {...}} or {success: true, data: {...}}
                 res_data = data.get("data")
                 if res_data:
+                    # Fallback title: Case where batchload title is empty
+                    if not res_data.get("title"):
+                        # Try to find from listing or home
+                        # We don't want to call trending every time, so we only do it as fallback
+                        logger.info(f"Title empty in batchload for {book_id}. Trying home fallback...")
+                        home_res = await client.get(f"{BASE_URL}/api/home", params={"lang": LANG})
+                        if home_res.status_code == 200:
+                            home_data = home_res.json()
+                            items = []
+                            payload = home_data.get("data")
+                            if isinstance(payload, dict): items = payload.get("data", [])
+                            elif isinstance(payload, list): items = payload
+                            
+                            for item in items:
+                                if str(item.get("playlet_id")) == str(book_id):
+                                    res_data["title"] = item.get("title")
+                                    break
                     return res_data
                 return data
             return None
