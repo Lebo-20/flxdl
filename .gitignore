@@ -1,5 +1,6 @@
 .env
 *.session
+*.session-journal
 processed.json
 __pycache__/
 test_api.py
@@ -10,3 +11,8 @@ flxdl_repo/
 *.mp4
 episodes/
 temp/
+*.log
+test_hls.py
+debug_episodes.py
+drama_detail_full.json
+trending_full.json
