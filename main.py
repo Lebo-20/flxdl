@@ -12,7 +12,7 @@ load_dotenv()
 # Local imports
 from api import (
     get_drama_detail, get_all_episodes, get_latest_dramas,
-    get_trending_dramas, search_dramas
+    get_trending_dramas, get_home_dramas, search_dramas
 )
 from downloader import download_all_episodes
 from merge import merge_episodes
@@ -146,11 +146,11 @@ async def on_download(event):
     
     status_msg = await event.reply(f"🎬 Drama: **{title}**\n📽 Total Episodes: {len(episodes)}\n\n⏳ Sedang mendownload dan memproses...")
     
-    BotState.is_processing = True
-    processed_ids.add(book_id)
-    save_processed(processed_ids)
+    success = await process_drama_full(book_id, chat_id, status_msg, title=title)
+    if success:
+        processed_ids.add(book_id)
+        save_processed(processed_ids)
     
-    await process_drama_full(book_id, chat_id, status_msg, title=title)
     BotState.is_processing = False
 
 async def process_drama_full(book_id, chat_id, status_msg=None, title=None):
@@ -236,13 +236,18 @@ async def auto_mode_loop():
             logger.info("🔍 Scanning Trending...")
             trending_dramas = await get_trending_dramas() or []
             api2_new = [d for d in trending_dramas if str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")) not in processed_ids]
+
+            # --- SOURCE 3: Home Recommendations ---
+            logger.info("🔍 Scanning Home (Recommendations)...")
+            home_dramas = await get_home_dramas() or []
+            api3_new = [d for d in home_dramas if str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")) not in processed_ids]
             
             # Combine and deduplicate
             new_queue = []
             seen_ids_in_batch = set()
             
-            # Interleave latest and trending or just concat
-            raw_queue = api1_new + api2_new
+            # Interleave latest, trending and home
+            raw_queue = api1_new + api2_new + api3_new
             
             for d in raw_queue:
                 bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", ""))
@@ -272,9 +277,6 @@ async def auto_mode_loop():
                 if not book_id:
                     continue
                     
-                processed_ids.add(book_id)
-                save_processed(processed_ids)
-                
                 new_found += 1
                 title = drama.get("title") or drama.get("bookName") or drama.get("name") or "Unknown"
                 logger.info(f"✨ New FlickReels drama: {title} ({book_id}). Starting process...")
@@ -282,12 +284,14 @@ async def auto_mode_loop():
                 try:
                     await client.send_message(ADMIN_ID, f"🆕 **FlickReels Detection!**\n🎬 `{title}`\n🆔 `{book_id}`\n⏳ Processing...")
                 except: pass
-                
+
                 BotState.is_processing = True
                 success = await process_drama_full(book_id, AUTO_CHANNEL, title=title)
                 BotState.is_processing = False
                 
                 if success:
+                    processed_ids.add(book_id)
+                    save_processed(processed_ids)
                     logger.info(f"✅ Finished {title}")
                     try:
                         await client.send_message(ADMIN_ID, f"✅ Sukses Auto-Post: **{title}**")

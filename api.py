@@ -157,3 +157,25 @@ async def get_trending_dramas():
         except Exception as e:
             logger.error(f"Error fetching trending: {e}")
             return []
+
+async def get_home_dramas():
+    """
+    Fetches dramas from the home page.
+    URL: /api/home?lang=6
+    """
+    url = f"{BASE_URL}/api/home"
+    params = {"lang": LANG}
+    
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        try:
+            response = await client.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict):
+                    res_data = data.get("data")
+                    if isinstance(res_data, list): return res_data
+                    if isinstance(res_data, dict): return res_data.get("data", [])
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching home dramas: {e}")
+            return []
