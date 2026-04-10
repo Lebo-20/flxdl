@@ -167,6 +167,8 @@ async def download_episode_smart(
     return False
 
 
+from utils import get_progress_bar
+
 # ────────────────────────────────────────────────────────────────────
 #  MAIN ENTRY — download all episodes for a drama
 # ────────────────────────────────────────────────────────────────────
@@ -175,17 +177,18 @@ async def download_all_episodes(
     download_dir: str,
     book_id: str = "0",
     semaphore_count: int = 3,
+    status_msg = None,
+    title: str = "Drama"
 ) -> bool:
     """
-    Smart downloader:
-    1. Fetches fresh URLs from API (filters out IMS = always 403)
-    2. Warms up CDN session (cookies)
-    3. Downloads only HLS episodes concurrently
-    4. On 403 mid-download → refreshes URLs from API
-    5. Considers success if downloaded > 0 episodes
+    Smart downloader with progress tracking.
     """
     os.makedirs(download_dir, exist_ok=True)
     semaphore = asyncio.Semaphore(semaphore_count)
+    
+    # Progress tracking
+    total_downloaded = 0
+    total_lock = asyncio.Lock()
 
     async with httpx.AsyncClient(
         timeout=60, follow_redirects=True, headers=BROWSER_HEADERS
@@ -223,11 +226,27 @@ async def download_all_episodes(
 
         # Step 3: Download all available episodes
         async def limited_download(ep_num: int, url: str) -> bool:
+            nonlocal total_downloaded
             async with semaphore:
                 filepath = os.path.join(download_dir, f"episode_{ep_num:03d}.mp4")
-                return await download_episode_smart(
+                success = await download_episode_smart(
                     cdn_client, api_client, book_id, ep_num, url, filepath
                 )
+                
+                if success:
+                    async with total_lock:
+                        total_downloaded += 1
+                        if status_msg:
+                            try:
+                                bar = get_progress_bar(total_downloaded, total_available)
+                                await status_msg.edit(
+                                    f"🎬 **Download: {title}**\n"
+                                    f"⏳ Downloading episodes...\n"
+                                    f"`{bar}`\n"
+                                    f"✅ Success: {total_downloaded} / {total_available}"
+                                )
+                            except: pass
+                return success
 
         tasks = [limited_download(n, u) for n, u in sorted(url_map.items())]
         results = await asyncio.gather(*tasks)
