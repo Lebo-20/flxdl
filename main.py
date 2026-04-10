@@ -115,7 +115,37 @@ async def panel_callback(event):
 
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.reply("Welcome to FlickReels Downloader Bot! 🎉\n\nGunakan perintah `/download {bookId}` untuk mulai.")
+    await event.reply("Welcome to FlickReels Downloader Bot! 🎉\n\nGunakan:\n- `/download {bookId}` untuk download drama.\n- `/cari {judul}` untuk mencari drama.")
+
+@client.on(events.NewMessage(pattern=r'/cari (.+)'))
+async def on_search(event):
+    chat_id = event.chat_id
+    if chat_id != ADMIN_ID:
+        return
+        
+    query = event.pattern_match.group(1)
+    status_msg = await event.reply(f"🔍 Mencari drama untuk: **{query}**...")
+    
+    try:
+        results = await search_dramas(query)
+        if not results:
+            await status_msg.edit(f"❌ Tidak ditemukan hasil untuk `{query}`.")
+            return
+            
+        text = f"🔍 **Hasil Pencarian ({len(results)}):**\n\n"
+        for i, res in enumerate(results[:15], 1): # Limit to 15 results
+            title = res.get("title") or res.get("bookName") or "Unknown"
+            bid = str(res.get("playlet_id") or res.get("bookId") or res.get("id") or "")
+            if bid:
+                text += f"{i}. **{title}**\n   ID: `/download {bid}`\n\n"
+        
+        if len(results) > 15:
+            text += "*(Hasil dibatasi 15 teratas)*"
+            
+        await status_msg.edit(text)
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        await status_msg.edit(f"❌ Terjadi kesalahan saat mencari: {e}")
 
 @client.on(events.NewMessage(pattern=r'/download (\d+)'))
 async def on_download(event):
