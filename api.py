@@ -8,6 +8,15 @@ BASE_URL = "https://flickreels.dramabos.my.id"
 AUTH_CODE = "A8D6AB170F7B89F2182561D3B32F390D"
 LANG = 6
 
+# Use browser-like headers for all API calls to avoid 403 or timeouts
+API_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Referer": "https://farsunpteltd.com/",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+}
+
 async def get_drama_detail(book_id: str):
     """
     Fetches drama detail from FlickReels API via /batchload.
@@ -19,14 +28,14 @@ async def get_drama_detail(book_id: str):
         "code": AUTH_CODE
     }
     
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
             if data and isinstance(data, dict):
                 res_data = data.get("data")
-                if res_data:
+                if isinstance(res_data, dict):
                     # Multi-Tier Title Fallback
                     # Tier 1: check root title
                     title = res_data.get("title")
@@ -56,18 +65,24 @@ async def get_drama_detail(book_id: str):
                     
                     res_data["title"] = title
                     return res_data
-                return data
+                
+                # If we got data but no inner 'data' block or it's not a dict, log it
+                logger.warning(f"Unexpected API structure for {book_id}: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                return None
             return None
         except Exception as e:
             logger.error(f"Error fetching drama detail for {book_id}: {e}")
             return None
 
-async def get_all_episodes(book_id: str):
+async def get_all_episodes(book_id: str, detail: dict = None):
     """
     Extracts episodes from FlickReels API drama detail.
     FlickReels /batchload uses "list" key for episodes.
+    If 'detail' is provided, skips fetching from network.
     """
-    detail = await get_drama_detail(book_id)
+    if not detail:
+        detail = await get_drama_detail(book_id)
+        
     if detail:
         episodes = detail.get("list") or detail.get("episodes") or []
         # Normalisasi: FlickReels uses 'chapter_num' instead of 'episode'
@@ -84,7 +99,7 @@ async def get_latest_dramas(pages=1, page_size=20):
     """
     all_dramas = []
     
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
         for page in range(1, pages + 1):
             url = f"{BASE_URL}/nexthome"
             params = {
@@ -126,7 +141,7 @@ async def search_dramas(query: str):
         "lang": LANG
     }
     
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
         try:
             response = await client.get(url, params=params)
             if response.status_code == 200:
@@ -146,7 +161,7 @@ async def get_trending_dramas():
     url = f"{BASE_URL}/trending"
     params = {"lang": LANG}
     
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
         try:
             response = await client.get(url, params=params)
             if response.status_code == 200:
@@ -166,7 +181,7 @@ async def get_home_dramas():
     url = f"{BASE_URL}/api/home"
     params = {"lang": LANG}
     
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
         try:
             response = await client.get(url, params=params)
             if response.status_code == 200:

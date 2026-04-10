@@ -251,11 +251,18 @@ async def on_download(event):
 
 async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thread_id=None):
     """Downloads, merges, and uploads a drama."""
+    # 1. Fetch data
     detail = await get_drama_detail(book_id)
-    episodes = await get_all_episodes(book_id)
+    if not detail:
+        if status_msg: await status_msg.edit(f"❌ Detail `{book_id}` tidak ditemukan.")
+        logger.error(f"❌ Failed to fetch detail for {book_id}")
+        return False
+        
+    episodes = await get_all_episodes(book_id, detail=detail)
     
-    if not detail or not episodes:
-        if status_msg: await status_msg.edit(f"❌ Detail atau Episode `{book_id}` tidak ditemukan.")
+    if not episodes:
+        if status_msg: await status_msg.edit(f"❌ Episode `{book_id}` tidak ditemukan atau kosong.")
+        logger.error(f"❌ No episodes found for {book_id} ('{detail.get('title')}')")
         return False
 
     # Use title from argument if provided, otherwise fallback to detail metadata
@@ -397,7 +404,10 @@ async def auto_mode_loop():
                     except: pass
                 else:
                     db.mark_failed(book_id, title)
-                    logger.error(f"❌ Failed to process {title}")
+                    logger.error(f"❌ Failed to process {title} ({book_id})")
+                    try:
+                        await client.send_message(ADMIN_ID, f"❌ Gagal memproses: **{title}** ({book_id})")
+                    except: pass
                 
                 await asyncio.sleep(10)
             

@@ -21,6 +21,13 @@ API_BASE = "https://flickreels.dramabos.my.id"
 AUTH_CODE = "A8D6AB170F7B89F2182561D3B32F390D"
 API_LANG = 6
 
+# Use the same browser headers for API calls
+API_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Referer": "https://farsunpteltd.com/",
+    "Accept": "application/json, text/plain, */*",
+}
+
 
 # ────────────────────────────────────────────────────────────────────
 #  FRESH URL FETCHER — fetches fresh batch and filters out IMS URLs
@@ -35,9 +42,14 @@ async def fetch_fresh_urls(book_id: str, api_client: httpx.AsyncClient) -> dict:
     params = {"lang": API_LANG, "code": AUTH_CODE}
 
     try:
-        resp = await api_client.get(url, params=params, timeout=30)
+        resp = await api_client.get(url, params=params, timeout=30, headers=API_HEADERS)
         resp.raise_for_status()
-        data = resp.json().get("data", {})
+        json_data = resp.json()
+        data = json_data.get("data", {}) if isinstance(json_data, dict) else {}
+        
+        if not data:
+             logger.warning(f"⚠️ Batchload for {book_id} returned no 'data' key. Response: {json_data}")
+             
         episodes = data.get("list", [])
 
         url_map = {}
