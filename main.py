@@ -299,12 +299,17 @@ async def auto_mode_loop():
             home_dramas = await get_home_dramas() or []
             api3_new = [d for d in home_dramas if str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")) not in processed_ids]
             
-            # Combine and deduplicate
+            # Combine and Rotate (Interleave)
             new_queue = []
             seen_ids_in_batch = set()
             
-            # Interleave latest, trending and home
-            raw_queue = api1_new + api2_new + api3_new
+            # Interleave latest, trending and home to provide rotation
+            max_len = max(len(api1_new), len(api2_new), len(api3_new))
+            raw_queue = []
+            for i in range(max_len):
+                if i < len(api1_new): raw_queue.append(api1_new[i])
+                if i < len(api2_new): raw_queue.append(api2_new[i])
+                if i < len(api3_new): raw_queue.append(api3_new[i])
             
             for d in raw_queue:
                 bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", ""))
@@ -314,7 +319,7 @@ async def auto_mode_loop():
             
             if not new_queue and not is_initial_run:
                 # Fallback: Search for some generic keywords to find new content
-                logger.info("ℹ️ No new dramas in Latest/Trending. Checking search fallback...")
+                logger.info("ℹ️ No new dramas in sources. Checking search fallback...")
                 fallbacks = ["cinta", "ceo", "istri", "suami"]
                 rand_q = random.choice(fallbacks)
                 search_res = await search_dramas(rand_q)
@@ -323,8 +328,7 @@ async def auto_mode_loop():
                     if bid and bid not in processed_ids and bid not in seen_ids_in_batch:
                         new_queue.append(d)
                         seen_ids_in_batch.add(bid)
-                        break 
-            
+                        break            
             new_found = 0
             for drama in new_queue:
                 if not BotState.is_auto_running:
