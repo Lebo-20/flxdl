@@ -24,6 +24,7 @@ API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 AUTO_CHANNEL = int(os.environ.get("AUTO_CHANNEL", ADMIN_ID)) # Default post to admin
+AUTO_THREAD_ID = int(os.environ.get("AUTO_THREAD_ID", "0")) or None # Topic ID for the group
 PROCESSED_FILE = "processed.json"
 
 # Initialize state
@@ -153,7 +154,7 @@ async def on_download(event):
     
     BotState.is_processing = False
 
-async def process_drama_full(book_id, chat_id, status_msg=None, title=None):
+async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thread_id=None):
     """Downloads, merges, and uploads a drama."""
     detail = await get_drama_detail(book_id)
     episodes = await get_all_episodes(book_id)
@@ -192,7 +193,8 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None):
         upload_success = await upload_drama(
             client, chat_id, 
             title, description, 
-            poster, output_video_path
+            poster, output_video_path,
+            thread_id=thread_id
         )
         
         if upload_success:
@@ -286,7 +288,7 @@ async def auto_mode_loop():
                 except: pass
 
                 BotState.is_processing = True
-                success = await process_drama_full(book_id, AUTO_CHANNEL, title=title)
+                success = await process_drama_full(book_id, AUTO_CHANNEL, title=title, thread_id=AUTO_THREAD_ID)
                 BotState.is_processing = False
                 
                 if success:
