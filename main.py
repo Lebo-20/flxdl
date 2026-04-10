@@ -4,6 +4,7 @@ import logging
 import shutil
 import tempfile
 import random
+import sqlite3
 from telethon import TelegramClient, events, Button
 from dotenv import load_dotenv
 
@@ -25,25 +26,57 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 AUTO_CHANNEL = int(os.environ.get("AUTO_CHANNEL", ADMIN_ID)) # Default post to admin
 AUTO_THREAD_ID = int(os.environ.get("AUTO_THREAD_ID", "0")) or None # Topic ID for the group
-PROCESSED_FILE = "processed.json"
+# Database Configuration
+DB_FILE = "bot_state.db"
 
-# Initialize state
-def load_processed():
-    if os.path.exists(PROCESSED_FILE):
-        import json
-        with open(PROCESSED_FILE, "r") as f:
-            try:
-                return set(json.load(f))
-            except:
-                return set()
-    return set()
+class Database:
+    def __init__(self):
+        self.conn = sqlite3.connect(DB_FILE)
+        self.create_tables()
+        
+    def create_tables(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS processed_dramas (
+                book_id TEXT PRIMARY KEY,
+                title TEXT,
+                status TEXT, -- 'success', 'failed'
+                attempts INTEGER DEFAULT 0
+            )
+        ''')
+        self.conn.commit()
+        
+    def is_processed(self, book_id):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT status, attempts FROM processed_dramas WHERE book_id = ?", (str(book_id),))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        status, attempts = row
+        # Skip if success OR if failed after 2 attempts
+        if status == 'success' or attempts >= 2:
+            return True
+        return False
+        
+    def mark_success(self, book_id, title):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO processed_dramas (book_id, title, status, attempts) 
+            VALUES (?, ?, 'success', 1)
+            ON CONFLICT(book_id) DO UPDATE SET status = 'success', attempts = attempts + 1
+        """, (str(book_id), title))
+        self.conn.commit()
+        
+    def mark_failed(self, book_id, title):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO processed_dramas (book_id, title, status, attempts) 
+            VALUES (?, ?, 'failed', 1)
+            ON CONFLICT(book_id) DO UPDATE SET attempts = attempts + 1
+        """, (str(book_id), title))
+        self.conn.commit()
 
-def save_processed(data):
-    import json
-    with open(PROCESSED_FILE, "w") as f:
-        json.dump(list(data), f)
-
-processed_ids = load_processed()
+db = Database()
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -203,9 +236,6 @@ async def on_download(event):
     status_msg = await event.reply(f"🎬 Drama: **{title}**\n📽 Total Episodes: {len(episodes)}\n\n⏳ Sedang mendownload dan memproses...")
     
     success = await process_drama_full(book_id, chat_id, status_msg, title=title)
-    if success:
-        processed_ids.add(book_id)
-        save_processed(processed_ids)
     
     BotState.is_processing = False
 
@@ -269,7 +299,6 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
 
 async def auto_mode_loop():
     """Loop to find and process new dramas automatically using FlickReels API."""
-    global processed_ids
     
     logger.info("🚀 FlickReels Auto-Mode Started.")
     
@@ -287,17 +316,17 @@ async def auto_mode_loop():
             # --- SOURCE 1: Latest Drams from Nexthome ---
             logger.info("🔍 Scanning Latest (Nexthome)...")
             latest_dramas = await get_latest_dramas(pages=3 if is_initial_run else 1) or []
-            api1_new = [d for d in latest_dramas if str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")) not in processed_ids]
+            api1_new = [d for d in latest_dramas if not db.is_processed(str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")))]
             
             # --- SOURCE 2: Trending ---
             logger.info("🔍 Scanning Trending...")
             trending_dramas = await get_trending_dramas() or []
-            api2_new = [d for d in trending_dramas if str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")) not in processed_ids]
+            api2_new = [d for d in trending_dramas if not db.is_processed(str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")))]
 
             # --- SOURCE 3: Home Recommendations ---
             logger.info("🔍 Scanning Home (Recommendations)...")
             home_dramas = await get_home_dramas() or []
-            api3_new = [d for d in home_dramas if str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")) not in processed_ids]
+            api3_new = [d for d in home_dramas if not db.is_processed(str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", "")))]
             
             # Combine and Rotate (Interleave)
             new_queue = []
@@ -313,7 +342,7 @@ async def auto_mode_loop():
             
             for d in raw_queue:
                 bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", ""))
-                if bid and bid not in processed_ids and bid not in seen_ids_in_batch:
+                if bid and not db.is_processed(bid) and bid not in seen_ids_in_batch:
                     new_queue.append(d)
                     seen_ids_in_batch.add(bid)
             
@@ -325,10 +354,10 @@ async def auto_mode_loop():
                 search_res = await search_dramas(rand_q)
                 for d in search_res:
                     bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", ""))
-                    if bid and bid not in processed_ids and bid not in seen_ids_in_batch:
+                    if bid and not db.is_processed(bid) and bid not in seen_ids_in_batch:
                         new_queue.append(d)
                         seen_ids_in_batch.add(bid)
-                        break            
+                        break
             new_found = 0
             for drama in new_queue:
                 if not BotState.is_auto_running:
@@ -351,13 +380,13 @@ async def auto_mode_loop():
                 BotState.is_processing = False
                 
                 if success:
-                    processed_ids.add(book_id)
-                    save_processed(processed_ids)
+                    db.mark_success(book_id, title)
                     logger.info(f"✅ Finished {title}")
                     try:
                         await client.send_message(ADMIN_ID, f"✅ Sukses Auto-Post: **{title}**")
                     except: pass
                 else:
+                    db.mark_failed(book_id, title)
                     logger.error(f"❌ Failed to process {title}")
                 
                 await asyncio.sleep(10)
