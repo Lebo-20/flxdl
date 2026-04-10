@@ -119,10 +119,10 @@ async def start(event):
 
 @client.on(events.NewMessage(pattern=r'/cari (.+)'))
 async def on_search(event):
-    chat_id = event.chat_id
-    if chat_id != ADMIN_ID:
+    if event.sender_id != ADMIN_ID:
         return
         
+    chat_id = event.chat_id
     query = event.pattern_match.group(1)
     status_msg = await event.reply(f"🔍 Mencari drama untuk: **{query}**...")
     
@@ -149,12 +149,12 @@ async def on_search(event):
 
 @client.on(events.NewMessage(pattern=r'/download (\d+)'))
 async def on_download(event):
-    chat_id = event.chat_id
-    
-    # Check admin
-    if chat_id != ADMIN_ID:
+    # Check admin by sender_id (allows command in groups)
+    if event.sender_id != ADMIN_ID:
         await event.reply("❌ Maaf, perintah ini hanya untuk admin.")
         return
+        
+    chat_id = event.chat_id
         
     if BotState.is_processing:
         await event.reply("⚠️ Sedang memproses drama lain. Tunggu hingga selesai (Anti bentrok).")
