@@ -108,6 +108,16 @@ async def update_bot(event):
     try:
         # Run git pull
         result = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True)
+        
+        # Auto delete session files if requested for fresh start
+        for file in os.listdir("."):
+            if file.endswith(".session") or file.endswith(".session-journal"):
+                try:
+                    os.remove(file)
+                    logger.info(f"Deleted session file: {file}")
+                except:
+                    pass
+                    
         await status_msg.edit(f"✅ Repositori berhasil di-pull:\n```\n{result.stdout}\n```\n\nSedang memulai ulang sistem (Restarting)...")
         
         # Restart the script forcefully replacing the current process image
