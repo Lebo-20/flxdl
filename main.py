@@ -214,7 +214,7 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
 
         # 4. Merge
         output_video_path = os.path.join(temp_dir, f"{title}.mp4")
-        merge_success = merge_episodes(video_dir, output_video_path)
+        merge_success = await merge_episodes(video_dir, output_video_path)
         if not merge_success:
             if status_msg: await status_msg.edit("❌ Merge Gagal.")
             return False

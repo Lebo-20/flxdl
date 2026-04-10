@@ -58,13 +58,19 @@ async def upload_drama(client: TelegramClient, chat_id: int,
         
         status_msg = await client.send_message(chat_id, "📤 Ekstraksi Thumbnail & Durasi Video...", reply_to=thread_id)
         
-        # 2. Extract Duration & Dimensions (Fallback directly if fails)
+        # 2. Extract Duration & Dimensions (Async)
         duration = 0
         width = 0
         height = 0
         try:
             ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=width,height", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
-            output = subprocess.check_output(ffprobe_cmd, text=True).strip().split('\n')
+            process = await asyncio.create_subprocess_exec(
+                *ffprobe_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await process.communicate()
+            output = stdout.decode().strip().split('\n')
             if len(output) >= 3:
                 width = int(output[0])
                 height = int(output[1])
@@ -72,10 +78,16 @@ async def upload_drama(client: TelegramClient, chat_id: int,
         except Exception as e:
             logger.warning(f"Failed to extract video info: {e}")
 
-        # 3. Extract Thumbnail
+        # 3. Extract Thumbnail (Async)
         thumb_path = os.path.join(tempfile.gettempdir(), f"thumb_{os.path.basename(video_path)}.jpg")
         try:
-            subprocess.run(["ffmpeg", "-y", "-i", video_path, "-ss", "00:00:01.000", "-vframes", "1", thumb_path], capture_output=True)
+            cmd = ["ffmpeg", "-y", "-i", video_path, "-ss", "00:00:01.000", "-vframes", "1", thumb_path]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.wait()
             if not os.path.exists(thumb_path):
                 thumb_path = None
         except Exception as e:
