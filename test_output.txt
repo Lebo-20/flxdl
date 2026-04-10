@@ -1,7 +1,0 @@
-﻿Testing get_drama_detail('4839')...
-Detail keys: ['playlet_id', 'title', 'cover', 'process_cover', 'status', 'list', 'is_collect', 'start_pay_num', 'auto_unlock', 'finish_state', 'current_chapter_id', 'has_collection', 'collection_chapter', 'collect_num', 'chapter_type', 'min_ratio', 'max_ratio', 'blooper_list', 'cached']
-Title: Salah Goda
-
-Testing get_all_episodes('4839')...
-Episodes count: 74
-First episode data: {'play_url': 'https://zshipricf.farsunpteltd.com/playlet-hls/1766302983_hls_92693.m3u8?verify=1775831920-iEK9Rnts0kvQ0eD6n%2BixlHvQCrFK6%2FVQfBN%2FRBtm%2Bwg%3D', 'size': 23489575, 'chapter_id': '341856', 'chapter_title': 'Salah Goda-EP.1', 'chapter_num': 1, 'chapter_cover': 'https://zshipricf.farsunpteltd.com/playlet-hls-cover/35668d48244d52bd3e27d87350556478.webp?verify=1775914720-K5Z7i7Yv7k1%2B2RbShjXQ7qefl8PjenRY3RwuHXCPtws%3D', 'is_lock': 0, 'hls_url': 'https://zshipricf.farsunpteltd.com/playlet-hls/1766302983_hls_92693.m3u8?verify=1775831920-iEK9Rnts0kvQ0eD6n%2BixlHvQCrFK6%2FVQfBN%2FRBtm%2Bwg%3D', 'is_need_pay': 0, 'is_pay_chapter': 2, 'show_unlock_popup': 0, 'share_text': 'https://pages.farsunpteltd.com?playlet_id=4839&package_id=2', 'hls_timeout': 1775830720, 'hls_time_left': 2400, 'duration': 261, 'is_own': 0, 'e_play_type': '', 'is_vip_episode': 0, 'origin_down_url': '/playlet-hls-ims/hls_ims_1767088197_341856_1_0_47917.mp4', 'down_file_size': 23489575, 'e_is_attribution_reel': False, 'e_is_pay_point': False, 'e_is_last_free_episode': False, 'e_is_vip_episode': False, 'e_VIP_level': '', 'episode': 1}
