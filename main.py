@@ -115,7 +115,32 @@ async def panel_callback(event):
 
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.reply("Welcome to FlickReels Downloader Bot! 🎉\n\nGunakan:\n- `/download {bookId}` untuk download drama.\n- `/cari {judul}` untuk mencari drama.")
+    await event.reply("Welcome to FlickReels Downloader Bot! 🎉\n\nGunakan:\n- `/download {bookId}` untuk download drama.\n- `/cari {judul}` untuk mencari drama.\n- `/list` untuk melihat drama terbaru.")
+
+@client.on(events.NewMessage(pattern=r'/(api/)?list'))
+async def on_list(event):
+    if event.sender_id != ADMIN_ID:
+        return
+        
+    status_msg = await event.reply("🔍 Mengambil daftar drama terbaru dari API...")
+    
+    try:
+        latest = await get_latest_dramas(pages=1)
+        if not latest:
+            await status_msg.edit("❌ Gagal mengambil daftar drama.")
+            return
+            
+        text = "🎬 **Daftar Drama Terbaru:**\n\n"
+        for i, d in enumerate(latest[:20], 1):
+            title = d.get("title") or d.get("bookName") or d.get("name") or "Unknown"
+            bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or "")
+            if bid:
+                text += f"{i}. **{title}**\n   ID: `/download {bid}`\n"
+                
+        await status_msg.edit(text)
+    except Exception as e:
+        logger.error(f"List error: {e}")
+        await status_msg.edit(f"❌ Terjadi kesalahan: {e}")
 
 @client.on(events.NewMessage(pattern=r'/cari (.+)'))
 async def on_search(event):
