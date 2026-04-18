@@ -52,7 +52,8 @@ class Database:
                 book_id TEXT PRIMARY KEY,
                 title TEXT,
                 status TEXT, -- 'success', 'failed'
-                attempts INTEGER DEFAULT 0
+                attempts INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         conn.commit()
