@@ -104,12 +104,23 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
         logger.warning(f"FFmpeg failed: {stderr.decode()[:200]}")
         return False
     else:
-        async with client.stream("GET", url, timeout=60) as resp:
-            resp.raise_for_status()
-            with open(path, "wb") as f:
-                async for chunk in resp.aiter_bytes():
-                    f.write(chunk)
-        return True
+        # Use aria2c for optimized multi-threaded direct downloads
+        cmd = [
+            "aria2c", "-x", "16", "-s", "16", "-j", "16",
+            "--header", f"User-Agent: {BROWSER_HEADERS['User-Agent']}",
+            "--header", f"Referer: {BROWSER_HEADERS['Referer']}",
+            "--console-log-level=error",
+            "--summary-interval=0",
+            "--allow-overwrite=true",
+            "-o", os.path.basename(path),
+            "-d", os.path.dirname(path),
+            url
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await proc.wait()
+        return proc.returncode == 0
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -177,7 +188,7 @@ async def download_all_episodes(
     episodes: list,
     download_dir: str,
     book_id: str = "0",
-    semaphore_count: int = 3,
+    semaphore_count: int = 5,
     status_msg = None,
     title: str = "Drama"
 ) -> bool:

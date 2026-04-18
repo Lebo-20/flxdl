@@ -117,7 +117,7 @@ logger = logging.getLogger(__name__)
 # Initialize Bot State
 class BotState:
     is_auto_running = True
-    is_processing = False
+    active_tasks = 0
 
 # Auto-cleanup session files on startup for fresh connection
 for file in os.listdir("."):
@@ -203,6 +203,9 @@ async def panel_callback(event):
         elif data == b"status":
             await event.answer(f"Status: {'Running' if BotState.is_auto_running else 'Stopped'}")
             await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
+        elif data == b"active_tasks":
+            await event.answer(f"Active Tasks: {BotState.active_tasks}")
+            await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
     except Exception as e:
         if "message is not modified" in str(e).lower() or "Message string and reply markup" in str(e):
             pass 
@@ -226,7 +229,7 @@ async def on_status_cmd(event):
         success_count = "N/A"
     
     status_text = "🟢 RUNNING (Auto)" if BotState.is_auto_running else "🔴 STOPPED (Auto)"
-    process_text = "🔄 PROCESSING" if BotState.is_processing else "✅ IDLE"
+    process_text = f"🔄 {BotState.active_tasks} ACTIVE TASKS" if BotState.active_tasks > 0 else "✅ IDLE"
     
     text = (
         "🎬 **FlickReels Bot Status**\n\n"
@@ -304,34 +307,35 @@ async def on_download(event):
         return
         
     chat_id = event.chat_id
-        
-    if BotState.is_processing:
-        await event.reply("⚠️ Sedang memproses drama lain. Tunggu hingga selesai (Anti bentrok).")
-        return
-        
     book_id = event.pattern_match.group(1)
     
-    # 1. Fetch data
-    detail = await get_drama_detail(book_id)
-    if not detail:
-        await event.reply(f"❌ Gagal mendapatkan detail drama `{book_id}`.")
-        return
+    # Allow parallel processing but track count
+    BotState.active_tasks += 1
+    
+    try:
+        # 1. Fetch data
+        detail = await get_drama_detail(book_id)
+        if not detail:
+            await event.reply(f"❌ Gagal mendapatkan detail drama `{book_id}`.")
+            BotState.active_tasks -= 1
+            return
+            
+        episodes = await get_all_episodes(book_id, detail=detail)
+        if not episodes:
+            await event.reply(f"❌ Drama `{book_id}` tidak memiliki episode.")
+            BotState.active_tasks -= 1
+            return
         
-    episodes = await get_all_episodes(book_id)
-    if not episodes:
-        await event.reply(f"❌ Drama `{book_id}` tidak memiliki episode.")
-        return
-    
-    title = detail.get("title") or detail.get("bookName") or detail.get("name") or f"Drama_{book_id}"
-    
-    status_msg = await event.reply(f"🎬 Drama: **{title}**\n📽 Total Episodes: {len(episodes)}\n\n⏳ Sedang mendownload dan memproses...")
-    
-    success = await process_drama_full(book_id, chat_id, status_msg, title=title)
-    
-    BotState.is_processing = False
+        title = detail.get("title") or detail.get("bookName") or detail.get("name") or f"Drama_{book_id}"
+        
+        status_msg = await event.reply(f"🎬 Drama: **{title}**\n📽 Total Episodes: {len(episodes)}\n\n⏳ Sedang mendownload dan memproses...")
+        
+        success, success_count, total_count = await process_drama_full(book_id, chat_id, status_msg, title=title)
+    finally:
+        BotState.active_tasks -= 1
 
 async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thread_id=None):
-    """Downloads, merges, and uploads a drama."""
+    """Downloads, merges, and uploads a drama. Returns (success, success_count, total_count)"""
     # 1. Fetch data
     detail = await get_drama_detail(book_id)
     if not detail:
@@ -360,17 +364,23 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
         if status_msg: await safe_edit(status_msg, f"🎬 Processing **{title}**...")
         
         # 3. Download (pass book_id so downloader can refresh URLs on 403)
-        success = await download_all_episodes(episodes, video_dir, book_id=book_id, status_msg=status_msg, title=title)
-        if not success:
-            if status_msg: await safe_edit(status_msg, "❌ Download Gagal.")
-            return False
+        # Returns success, but we want status
+        download_res = await download_all_episodes(episodes, video_dir, book_id=book_id, status_msg=status_msg, title=title)
+        
+        # We need to know how many succeeded for the final message
+        success_count = len([f for f in os.listdir(video_dir) if f.endswith(".mp4")])
+        total_available = len(episodes) # simplification
+        
+        if not download_res or success_count == 0:
+            if status_msg: await safe_edit(status_msg, "❌ Download Gagal atau tidak ada episode yang bisa diunduh.")
+            return False, 0, total_available
 
         # 4. Merge
         output_video_path = os.path.join(temp_dir, f"{title}.mp4")
         merge_success = await merge_episodes(video_dir, output_video_path)
         if not merge_success:
             if status_msg: await safe_edit(status_msg, "❌ Merge Gagal.")
-            return False
+            return False, success_count, total_available
 
         # 5. Upload
         upload_success = await upload_drama(
@@ -382,15 +392,17 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
         )
         
         if upload_success:
-            return True
+            msg_text = f"✅ Sukses Uploaded: **{title}**\n📽 Episode: {success_count}/{total_available}"
+            await safe_edit(status_msg, msg_text)
+            return True, success_count, total_available
         else:
             if status_msg: await safe_edit(status_msg, "❌ Upload Gagal.")
-            return False
+            return False, success_count, total_available
             
     except Exception as e:
         logger.error(f"Error processing {book_id}: {e}")
         if status_msg: await safe_edit(status_msg, f"❌ Error: {e}")
-        return False
+        return False, 0, 0
     finally:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
@@ -488,9 +500,9 @@ async def auto_mode_loop():
                 except: 
                     status_msgs = None
 
-                BotState.is_processing = True
-                success = await process_drama_full(book_id, AUTO_CHANNEL, status_msg=status_msgs, title=title, thread_id=AUTO_THREAD_ID)
-                BotState.is_processing = False
+                BotState.active_tasks += 1
+                success, success_count, total_count = await process_drama_full(book_id, AUTO_CHANNEL, status_msg=status_msgs, title=title, thread_id=AUTO_THREAD_ID)
+                BotState.active_tasks -= 1
                 
                 if success:
                     db.mark_success(book_id, title)
