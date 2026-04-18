@@ -28,51 +28,57 @@ async def get_drama_detail(book_id: str):
         "code": AUTH_CODE
     }
     
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
-        try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            if data and isinstance(data, dict):
-                res_data = data.get("data")
-                if isinstance(res_data, dict):
-                    # Multi-Tier Title Fallback
-                    # Tier 1: check root title
-                    title = res_data.get("title")
+    async with httpx.AsyncClient(timeout=45, follow_redirects=True, headers=API_HEADERS) as client:
+        for attempt in range(1, 4):
+            try:
+                response = await client.get(url, params=params)
+                if response.status_code != 200:
+                    logger.warning(f"⚠️ Attempt {attempt}: API returned {response.status_code} for {book_id}")
+                    if attempt < 3:
+                        await asyncio.sleep(2 * attempt)
+                        continue
+                    return None
                     
-                    # Tier 2: check first episode title
-                    episodes = res_data.get("list") or res_data.get("episodes") or []
-                    if not title and episodes:
-                        title = episodes[0].get("chapter_title")
+                data = response.json()
+                if data and isinstance(data, dict):
+                    res_data = data.get("data")
+                    if isinstance(res_data, dict):
+                        # Multi-Tier Title Fallback
+                        title = res_data.get("title")
+                        
+                        episodes = res_data.get("list") or res_data.get("episodes") or []
+                        if not title and episodes:
+                            title = episodes[0].get("chapter_title")
+                        
+                        if not title:
+                            logger.info(f"Title empty in batchload for {book_id}. Trying home fallback...")
+                            home_res = await client.get(f"{BASE_URL}/api/home", params={"lang": LANG})
+                            if home_res.status_code == 200:
+                                home_data = home_res.json()
+                                items = []
+                                payload = home_data.get("data")
+                                if isinstance(payload, dict): items = payload.get("data", [])
+                                elif isinstance(payload, list): items = payload
+                                
+                                for item in items:
+                                    if str(item.get("playlet_id")) == str(book_id):
+                                        title = item.get("title")
+                                        res_data["description"] = item.get("introduction") or item.get("intro")
+                                        break
+                        
+                        res_data["title"] = title
+                        return res_data
                     
-                    # Tier 3: Try to find from listing or home
-                    if not title:
-                        logger.info(f"Title empty in batchload for {book_id}. Trying home fallback...")
-                        home_res = await client.get(f"{BASE_URL}/api/home", params={"lang": LANG})
-                        if home_res.status_code == 200:
-                            home_data = home_res.json()
-                            items = []
-                            payload = home_data.get("data")
-                            if isinstance(payload, dict): items = payload.get("data", [])
-                            elif isinstance(payload, list): items = payload
-                            
-                            for item in items:
-                                if str(item.get("playlet_id")) == str(book_id):
-                                    title = item.get("title")
-                                    # Use home fallback for intro too!
-                                    res_data["description"] = item.get("introduction") or item.get("intro")
-                                    break
-                    
-                    res_data["title"] = title
-                    return res_data
-                
-                # If we got data but no inner 'data' block or it's not a dict, log it
-                logger.warning(f"Unexpected API structure for {book_id}: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    logger.warning(f"Unexpected API structure for {book_id}: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    return None
                 return None
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching drama detail for {book_id}: {e}")
-            return None
+            except Exception as e:
+                logger.error(f"Error fetching drama detail for {book_id} (Attempt {attempt}): {e}")
+                if attempt < 3:
+                    await asyncio.sleep(2 * attempt)
+                    continue
+                return None
+        return None
 
 async def get_all_episodes(book_id: str, detail: dict = None):
     """
