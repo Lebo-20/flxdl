@@ -119,6 +119,15 @@ class BotState:
     is_auto_running = True
     is_processing = False
 
+# Auto-cleanup session files on startup for fresh connection
+for file in os.listdir("."):
+    if file.endswith(".session") or file.endswith(".session-journal"):
+        try:
+            os.remove(file)
+            logging.info(f"🗑 Deleted old session file: {file}")
+        except:
+            pass
+
 async def safe_edit(msg_or_msgs, text, **kwargs):
     """Edits a single message or a list of messages."""
     if not msg_or_msgs:
