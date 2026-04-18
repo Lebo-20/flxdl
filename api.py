@@ -189,8 +189,33 @@ async def get_home_dramas():
                 if isinstance(data, dict):
                     res_data = data.get("data")
                     if isinstance(res_data, list): return res_data
-                    if isinstance(res_data, dict): return res_data.get("data", [])
+                    if isinstance(res_data, dict): 
+                        # Check for 'data' key inside 'data'
+                        return res_data.get("data") or []
             return []
         except Exception as e:
             logger.error(f"Error fetching home dramas: {e}")
+            return []
+
+async def get_list_dramas(category_id: int = 0, page: int = 1):
+    """
+    Fetches dramas from the list page by category.
+    URL: /api/list?lang=6&category_id=0&page=1
+    """
+    url = f"{BASE_URL}/api/list"
+    params = {"lang": LANG, "category_id": category_id, "page": page}
+    
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
+        try:
+            response = await client.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict):
+                    res_data = data.get("data")
+                    if isinstance(res_data, list): return res_data
+                    if isinstance(res_data, dict):
+                        return res_data.get("data") or []
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching list dramas: {e}")
             return []

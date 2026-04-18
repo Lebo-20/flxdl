@@ -26,7 +26,8 @@ async def upload_progress(current, total, event, msg_text="Uploading..."):
 async def upload_drama(client: TelegramClient, chat_id: int, 
                        title: str, description: str, 
                        poster_url: str, video_path: str,
-                       thread_id: int = None):
+                       thread_id: int = None,
+                       status_msg = None):
     """
     Uploads the drama information and merged video to Telegram.
     """
@@ -63,7 +64,17 @@ async def upload_drama(client: TelegramClient, chat_id: int,
         if poster_path and os.path.exists(poster_path):
             os.remove(poster_path)
         
-        status_msg = await client.send_message(chat_id, "📤 Ekstraksi Thumbnail & Durasi Video...", reply_to=thread_id)
+        msg_text = "📤 Ekstraksi Thumbnail & Durasi Video..."
+        if status_msg:
+            if isinstance(status_msg, list):
+                for m in status_msg:
+                    try: await m.edit(msg_text)
+                    except: pass
+            else:
+                try: await status_msg.edit(msg_text)
+                except: pass
+        else:
+            status_msg = await client.send_message(chat_id, msg_text, reply_to=thread_id)
         
         # 2. Extract Duration & Dimensions (Async)
         duration = 0
@@ -101,7 +112,13 @@ async def upload_drama(client: TelegramClient, chat_id: int,
             logger.warning(f"Failed to generate thumbnail: {e}")
             thumb_path = None
 
-        await status_msg.edit("📤 Sedang mengupload video ke Telegram...")
+        msg_text = "📤 Sedang mengupload video ke Telegram..."
+        if isinstance(status_msg, list):
+            for m in status_msg:
+                try: await m.edit(msg_text)
+                except: pass
+        else:
+            await status_msg.edit(msg_text)
         
         from telethon.tl.types import DocumentAttributeVideo
         video_attributes = [
@@ -125,7 +142,13 @@ async def upload_drama(client: TelegramClient, chat_id: int,
             supports_streaming=True
         )
         
-        await status_msg.delete()
+        msg_text = f"✅ Sukses Uploaded: **{title}**"
+        if isinstance(status_msg, list):
+            for m in status_msg:
+                try: await m.edit(msg_text)
+                except: pass
+        else:
+            await status_msg.edit(msg_text)
         if thumb_path and os.path.exists(thumb_path):
             os.remove(thumb_path)
             

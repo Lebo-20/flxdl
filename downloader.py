@@ -238,13 +238,20 @@ async def download_all_episodes(
                         total_downloaded += 1
                         if status_msg:
                             try:
-                                bar = get_progress_bar(total_downloaded, total_available)
-                                await status_msg.edit(
-                                    f"🎬 **Download: {title}**\n"
-                                    f"⏳ Downloading episodes...\n"
-                                    f"`{bar}`\n"
-                                    f"✅ Success: {total_downloaded} / {total_available}"
-                                )
+                                    bar = get_progress_bar(total_downloaded, total_available)
+                                    msg_text = (
+                                        f"🎬 **Download: {title}**\n"
+                                        f"⏳ Downloading episodes...\n"
+                                        f"`{bar}`\n"
+                                        f"✅ Success: {total_downloaded} / {total_available}"
+                                    )
+                                    if isinstance(status_msg, list):
+                                        for m in status_msg:
+                                            try: await m.edit(msg_text)
+                                            except: pass
+                                    else:
+                                        try: await status_msg.edit(msg_text)
+                                        except: pass
                             except: pass
                 return success
 
