@@ -56,7 +56,8 @@ async def fetch_fresh_urls(book_id: str, api_client: httpx.AsyncClient) -> dict:
         ims_count = 0
         for ep in episodes:
             ep_num = ep.get("chapter_num") or ep.get("episode", 0)
-            play_url = ep.get("play_url") or ep.get("playUrl") or ep.get("url")
+            # Prioritize hls_url as it often has the clean m3u8 while play_url might be IMS
+            play_url = ep.get("hls_url") or ep.get("play_url") or ep.get("playUrl") or ep.get("url")
             if ep_num and play_url:
                 ep_num = int(ep_num)
                 # IMS URLs always return 403 — skip them
@@ -204,7 +205,8 @@ async def download_all_episodes(
             logger.warning("⚠️ Fresh URL fetch failed, using original episode URLs...")
             for ep in episodes:
                 ep_num = int(ep.get("episode") or ep.get("chapter_num", 0))
-                url = ep.get("play_url") or ep.get("playUrl") or ep.get("url")
+                # Prioritize hls_url
+                url = ep.get("hls_url") or ep.get("play_url") or ep.get("playUrl") or ep.get("url")
                 if ep_num and url and "hls-ims" not in url:
                     url_map[ep_num] = url
 
