@@ -227,7 +227,7 @@ async def on_status_cmd(event):
     )
     await event.reply(text)
 
-@client.on(events.NewMessage(pattern='/start'))
+@client.on(events.NewMessage(pattern='/flickreels start'))
 async def start(event):
     await event.reply("Welcome to FlickReels Downloader Bot! 🎉\n\nGunakan:\n- `/flickreels download {ID}` untuk download drama.\n- `/flickreels cari {judul}` untuk mencari drama.\n- `/flickreels status` untuk cek proses.\n- `/flickreels panel` untuk kontrol.")
 
