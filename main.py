@@ -261,11 +261,13 @@ async def panel_callback(event):
         elif data == b"cmd_main":
             await event.edit("🎬 **FlickReels Menu Utama**", buttons=get_main_buttons())
         elif data == b"cmd_search":
-            await event.delete()
-            await client.send_message(event.chat_id, "🔍 Silakan balas pesan ini dengan **Judul Drama** yang dicari:", reply_markup=types.ForceReply())
+            await event.respond("🔍 Silakan balas pesan ini dengan **Judul Drama** yang dicari:", reply_markup=types.ForceReply())
+            try: await event.delete()
+            except: pass
         elif data == b"cmd_download":
-            await event.delete()
-            await client.send_message(event.chat_id, "📥 Silakan balas pesan ini dengan **ID Drama** yang ingin didownload:", reply_markup=types.ForceReply())
+            await event.respond("📥 Silakan balas pesan ini dengan **ID Drama** yang ingin didownload:", reply_markup=types.ForceReply())
+            try: await event.delete()
+            except: pass
         elif data == b"cmd_status":
             await on_status_cmd(event)
         elif data == b"cmd_list":
