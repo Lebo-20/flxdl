@@ -269,6 +269,41 @@ async def on_admin_del(event):
     db.remove_admin(target_admin)
     await event.reply(f"✅ User `{target_admin}` berhasil dihapus dari daftar admin.")
 
+@client.on(events.NewMessage(pattern='/admin list'))
+async def on_admin_list(event):
+    if event.sender_id not in get_active_admins():
+        return
+        
+    status_msg = await event.reply("⌛ Mengambil daftar admin...")
+    
+    text = "👥 **Daftar Admin FlickReels:**\n\n"
+    
+    # Super Admins
+    text += "👑 **Super Admins (.env):**\n"
+    for aid in SUPER_ADMIN_IDS:
+        try:
+            user = await client.get_entity(aid)
+            name = f"@{user.username}" if user.username else f"{user.first_name}"
+            text += f"• `{aid}` — **{name}**\n"
+        except:
+            text += f"• `{aid}` — (Belum pernah interaksi)\n"
+    
+    # DB Admins
+    db_admins = db.get_admins()
+    if db_admins:
+        text += "\n👤 **Admin Tambahan:**\n"
+        for aid in db_admins:
+            try:
+                user = await client.get_entity(aid)
+                name = f"@{user.username}" if user.username else f"{user.first_name}"
+                text += f"• `{aid}` — **{name}**\n"
+            except:
+                text += f"• `{aid}` — (Belum pernah interaksi)\n"
+    else:
+        text += "\n*(Tidak ada admin tambahan)*"
+            
+    await status_msg.edit(text)
+
 @client.on(events.NewMessage(pattern='/flickreels status'))
 async def on_status_cmd(event):
     if event.sender_id not in get_active_admins():
@@ -665,7 +700,8 @@ async def main():
         "• `/flickreels update` — Update bot via git\n\n"
         "👥 **Manajemen Admin:**\n"
         "• `/admin add {ID}` — Tambah admin baru\n"
-        "• `/admin hapus {ID}` — Hapus admin\n\n"
+        "• `/admin hapus {ID}` — Hapus admin\n"
+        "• `/admin list` — Lihat daftar admin\n\n"
         "⚡ *Manual Command selalu diutamakan!*"
     )
     
