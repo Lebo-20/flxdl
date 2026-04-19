@@ -238,6 +238,11 @@ async def panel_callback(event):
         
     data = event.data
     
+    # Segera hilangkan loading spinner di Telegram
+    if data not in [b"start_auto", b"stop_auto", b"status", b"active_tasks"]:
+        try: await event.answer()
+        except: pass
+    
     try:
         if data == b"start_auto":
             BotState.is_auto_running = True
