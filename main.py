@@ -492,10 +492,18 @@ async def on_reply_handler(event):
         return
         
     if "Judul Drama" in replied_msg.text:
+        try:
+            await event.delete() # Hapus pesan input user
+            await replied_msg.delete() # Hapus pesan instruksi bot
+        except: pass
         # Pseudo search pattern match
         event.pattern_match = type('Match', (object,), {'group': lambda i: event.text})
         await on_search(event)
     elif "ID Drama" in replied_msg.text:
+        try:
+            await event.delete() # Hapus pesan input user
+            await replied_msg.delete() # Hapus pesan instruksi bot
+        except: pass
         # Pseudo download pattern match
         event.pattern_match = type('Match', (object,), {'group': lambda i: event.text})
         await on_download(event)
