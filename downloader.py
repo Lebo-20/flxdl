@@ -34,44 +34,81 @@ API_HEADERS = {
 # ────────────────────────────────────────────────────────────────────
 async def fetch_fresh_urls(book_id: str, api_client: httpx.AsyncClient) -> dict:
     """
-    Calls /batchload to get fresh episode URLs.
+    Fetches fresh episode URLs. Priority: /batchload first, then /api/list for pagination.
     Returns dict: {episode_number: play_url}
-    Only returns URLs that are NOT IMS (which always return 403).
     """
-    url = f"{API_BASE}/batchload/{book_id}"
+    url_map = {}
+    ims_count = 0
+    
+    # 1. Start with /batchload to get initial list and metadata
+    batch_url = f"{API_BASE}/batchload/{book_id}"
     params = {"lang": API_LANG, "code": AUTH_CODE}
-
+    
     try:
-        resp = await api_client.get(url, params=params, timeout=30, headers=API_HEADERS)
-        resp.raise_for_status()
-        json_data = resp.json()
-        data = json_data.get("data", {}) if isinstance(json_data, dict) else {}
-        
-        if not data:
-             logger.warning(f"⚠️ Batchload for {book_id} returned no 'data' key. Response: {json_data}")
-             
-        episodes = data.get("list", [])
-
-        url_map = {}
-        ims_count = 0
-        for ep in episodes:
-            ep_num = ep.get("chapter_num") or ep.get("episode", 0)
-            # Prioritize hls_url as it often has the clean m3u8 while play_url might be IMS
-            play_url = ep.get("hls_url") or ep.get("play_url") or ep.get("playUrl") or ep.get("url")
-            if ep_num and play_url:
-                ep_num = int(ep_num)
-                # IMS URLs always return 403 — skip them
-                if "hls-ims" in play_url:
-                    ims_count += 1
-                else:
-                    url_map[ep_num] = play_url
-
-        logger.info(f"🔑 Fresh URLs for {book_id}: {len(url_map)} HLS (downloadable) + {ims_count} IMS (skipped)")
+        resp = await api_client.get(batch_url, params=params, timeout=30, headers=API_HEADERS)
+        if resp.status_code == 200:
+            json_data = resp.json()
+            data = json_data.get("data", {}) if isinstance(json_data, dict) else {}
+            episodes = data.get("list") or data.get("episodes") or []
+            
+            for ep in episodes:
+                ep_num = ep.get("chapter_num") or ep.get("episode")
+                play_url = ep.get("hls_url") or ep.get("play_url")
+                if ep_num and play_url:
+                    url_map[int(ep_num)] = play_url
+            
+            # Check if we need more pages
+            total_chapters = data.get("total_chapters") or data.get("chapters_total")
+            is_all = data.get("is_all", 0)
+            
+            if (len(episodes) <= 20 and is_all == 0) or (total_chapters and len(url_map) < int(total_chapters)):
+                logger.info(f"🔄 URL map potentially truncated ({len(url_map)}), fetching more from /api/list...")
+                page = 1
+                while True:
+                    list_params = {
+                        "id": book_id,
+                        "lang": API_LANG,
+                        "page": page,
+                        "page_size": 20
+                    }
+                    list_resp = await api_client.get(f"{API_BASE}/api/list", params=list_params, timeout=30, headers=API_HEADERS)
+                    if list_resp.status_code != 200:
+                        break
+                        
+                    list_data = list_resp.json()
+                    if list_data.get("ret") != 200:
+                        break
+                        
+                    payload = list_data.get("data", {})
+                    items = []
+                    if isinstance(payload, list): items = payload
+                    elif isinstance(payload, dict): items = payload.get("list") or payload.get("data") or []
+                    
+                    if not items:
+                        break
+                        
+                    for ep in items:
+                        ep_num = ep.get("chapter_num") or ep.get("episode")
+                        play_url = ep.get("hls_url") or ep.get("play_url")
+                        if ep_num and play_url and int(ep_num) not in url_map:
+                            url_map[int(ep_num)] = play_url
+                    
+                    # Termination check
+                    is_all_list = 0
+                    if isinstance(payload, dict):
+                        is_all_list = payload.get("is_all", 0)
+                        
+                    if len(items) < 20 or is_all_list == 1:
+                        break
+                    page += 1
+                    if page > 50: break
+                    
+        logger.info(f"🔑 Fresh URLs for {book_id}: {len(url_map)} episodes found.")
         return url_map
 
     except Exception as e:
         logger.error(f"❌ Failed to fetch fresh URLs for {book_id}: {e}")
-        return {}
+        return url_map
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -98,11 +135,16 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        _, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            return True
-        logger.warning(f"FFmpeg failed: {stderr.decode()[:200]}")
-        return False
+        try:
+            _, stderr = await proc.communicate()
+            if proc.returncode == 0:
+                return True
+            logger.warning(f"FFmpeg failed: {stderr.decode()[:200]}")
+            return False
+        finally:
+            if proc.returncode is None:
+                try: proc.kill()
+                except: pass
     else:
         # Use aria2c for optimized multi-threaded direct downloads
         cmd = [
@@ -119,8 +161,13 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        await proc.wait()
-        return proc.returncode == 0
+        try:
+            await proc.wait()
+            return proc.returncode == 0
+        finally:
+            if proc.returncode is None:
+                try: proc.kill()
+                except: pass
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -218,12 +265,12 @@ async def download_all_episodes(
                 ep_num = int(ep.get("episode") or ep.get("chapter_num", 0))
                 # Prioritize hls_url
                 url = ep.get("hls_url") or ep.get("play_url") or ep.get("playUrl") or ep.get("url")
-                if ep_num and url and "hls-ims" not in url:
+                if ep_num and url:
                     url_map[ep_num] = url
 
         total_available = len(url_map)
         total_episodes = len(episodes)
-        logger.info(f"📋 Downloadable: {total_available}/{total_episodes} episodes (IMS filtered out)")
+        logger.info(f"📋 Downloadable: {total_available}/{total_episodes} episodes.")
 
         if total_available == 0:
             logger.error("❌ No downloadable episodes found (all IMS)")
@@ -272,7 +319,6 @@ async def download_all_episodes(
         results = await asyncio.gather(*tasks)
 
     success_count = sum(results)
-    logger.info(f"📊 Download result: {success_count}/{total_available} episodes OK "
-                f"({total_episodes - total_available} IMS skipped)")
+    logger.info(f"📊 Download result: {success_count}/{total_available} episodes OK")
 
     return success_count > 0

@@ -118,6 +118,8 @@ logger = logging.getLogger(__name__)
 class BotState:
     is_auto_running = True
     active_tasks = 0
+    manual_active_tasks = 0
+    current_auto_process = None # Tracks the currently running auto task
 
 # Auto-cleanup session files on startup for fresh connection
 for file in os.listdir("."):
@@ -236,13 +238,22 @@ async def on_status_cmd(event):
         f"📡 **Mode Auto:** {status_text}\n"
         f"⚙️ **Status Proses:** {process_text}\n"
         f"📊 **Database:** `{success_count}` Drama Berhasil\n\n"
-        "⚡ **Prioritas:** Manual command diutamakan!"
+        "⚡ **Prioritas:** Manual command akan membatalkan auto-proses aktif!"
     )
     await event.reply(text)
 
 @client.on(events.NewMessage(pattern='/flickreels start'))
+@client.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.reply("Welcome to FlickReels Downloader Bot! 🎉\n\nGunakan:\n- `/flickreels download {ID}` untuk download drama.\n- `/flickreels cari {judul}` untuk mencari drama.\n- `/flickreels status` untuk cek proses.\n- `/flickreels panel` untuk kontrol.")
+    text = (
+        "Welcome to FlickReels Downloader Bot! 🎉\n\n"
+        "Gunakan:\n"
+        "- `/flickreels download {ID}` untuk download drama.\n"
+        "- `/flickreels cari {judul}` untuk mencari drama.\n"
+        "- `/flickreels status` untuk cek proses.\n"
+        "- `/flickreels panel` untuk kontrol."
+    )
+    await event.reply(text)
 
 @client.on(events.NewMessage(pattern=r'/flickreels list'))
 async def on_list(event):
@@ -262,7 +273,7 @@ async def on_list(event):
             title = d.get("title") or d.get("bookName") or d.get("name") or "Unknown"
             bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or "")
             if bid:
-                text += f"{i}. **{title}**\n   ID: `/download {bid}`\n"
+                text += f"{i}. **{title}**\n   ID: `/flickreels download {bid}`\n"
                 
         await status_msg.edit(text)
     except Exception as e:
@@ -276,6 +287,14 @@ async def on_search(event):
         
     chat_id = event.chat_id
     query = event.pattern_match.group(1)
+    
+    # Prioritas Manual: Batalkan auto-proses jika ada
+    if BotState.current_auto_process and not BotState.current_auto_process.done():
+        logger.info(f"⚔️ Manual search ('{query}') requested. Cancelling auto-task...")
+        BotState.current_auto_process.cancel()
+        try: await BotState.current_auto_process
+        except: pass
+
     status_msg = await event.reply(f"🔍 Mencari drama untuk: **{query}**...")
     
     try:
@@ -289,7 +308,7 @@ async def on_search(event):
             title = res.get("title") or res.get("bookName") or "Unknown"
             bid = str(res.get("playlet_id") or res.get("bookId") or res.get("id") or "")
             if bid:
-                text += f"{i}. **{title}**\n   ID: `/download {bid}`\n\n"
+                text += f"{i}. **{title}**\n   ID: `/flickreels download {bid}`\n\n"
         
         if len(results) > 15:
             text += "*(Hasil dibatasi 15 teratas)*"
@@ -309,8 +328,16 @@ async def on_download(event):
     chat_id = event.chat_id
     book_id = event.pattern_match.group(1)
     
+    # Prioritas Manual: Batalkan auto-proses jika ada
+    if BotState.current_auto_process and not BotState.current_auto_process.done():
+        logger.info(f"⚔️ Manual download ({book_id}) requested. Cancelling auto-task...")
+        BotState.current_auto_process.cancel()
+        try: await BotState.current_auto_process
+        except: pass
+
     # Allow parallel processing but track count
     BotState.active_tasks += 1
+    BotState.manual_active_tasks += 1
     
     try:
         # 1. Fetch data
@@ -333,6 +360,7 @@ async def on_download(event):
         success, success_count, total_count = await process_drama_full(book_id, chat_id, status_msg, title=title)
     finally:
         BotState.active_tasks -= 1
+        BotState.manual_active_tasks -= 1
 
 async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thread_id=None):
     """Downloads, merges, and uploads a drama. Returns (success, success_count, total_count)"""
@@ -405,7 +433,13 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
         return False, 0, 0
     finally:
         if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+            # Retry cleanup on Windows to handle locks
+            for i in range(5):
+                try:
+                    shutil.rmtree(temp_dir)
+                    break
+                except:
+                    await asyncio.sleep(1)
 
 async def auto_mode_loop():
     """Loop to find and process new dramas automatically using FlickReels API."""
@@ -421,8 +455,6 @@ async def auto_mode_loop():
             
         try:
             interval = 5 if is_initial_run else 15
-            logger.info(f"🔍 Scanning for new dramas (Next scan in {interval}m)...")
-            
             # --- SOURCE 1: Home (/api/home) ---
             logger.info("🔍 Scanning Home (/api/home)...")
             home_dramas = await get_home_dramas() or []
@@ -483,6 +515,13 @@ async def auto_mode_loop():
             for drama in new_queue:
                 if not BotState.is_auto_running:
                     break
+                
+                # Manual Priority: Wait if manual tasks are running
+                while BotState.manual_active_tasks > 0:
+                    logger.info("⏳ Manual task is running. Auto-mode waiting...")
+                    await asyncio.sleep(30)
+                    if not BotState.is_auto_running:
+                        break
                     
                 book_id = str(drama.get("playlet_id") or drama.get("bookId") or drama.get("id") or drama.get("bookid", ""))
                 if not book_id:
@@ -501,28 +540,47 @@ async def auto_mode_loop():
                     status_msgs = None
 
                 BotState.active_tasks += 1
-                success, success_count, total_count = await process_drama_full(book_id, AUTO_CHANNEL, status_msg=status_msgs, title=title, thread_id=AUTO_THREAD_ID)
-                BotState.active_tasks -= 1
                 
-                if success:
-                    db.mark_success(book_id, title)
-                    logger.info(f"✅ Finished {title}")
-                    try:
-                        await safe_edit(status_msgs, f"✅ Sukses Auto-Post: **{title}**\n\n💤 Bot istirahat 30 menit (Auto-Mode).")
+                # Use create_task so it's cancellable
+                BotState.current_auto_process = asyncio.create_task(
+                    process_drama_full(book_id, AUTO_CHANNEL, status_msg=status_msgs, title=title, thread_id=AUTO_THREAD_ID)
+                )
+                
+                try:
+                    success, success_count, total_count = await BotState.current_auto_process
+                    if success:
+                        db.mark_success(book_id, title)
+                        logger.info(f"✅ Finished {title}")
+                        try:
+                            await safe_edit(status_msgs, f"✅ Sukses Auto-Post: **{title}**\n\n💤 Bot istirahat 30 menit (Auto-Mode).")
+                        except: pass
+                        
+                        # 30-minute rest after successful auto-upload
+                        logger.info("💤 Resting for 30 minutes after successful auto-upload...")
+                        for _ in range(30 * 60):
+                            if not BotState.is_auto_running or BotState.manual_active_tasks > 0:
+                                break
+                            await asyncio.sleep(1)
+                    else:
+                        db.mark_failed(book_id, title)
+                        logger.error(f"❌ Failed to process {title} ({book_id})")
+                        try:
+                            await safe_edit(status_msgs, f"❌ Gagal memproses: **{title}** ({book_id})")
+                        except: pass
+                except asyncio.CancelledError:
+                    logger.info(f"🛑 Auto-process untuk '{title}' dibatalkan demi perintah manual.")
+                    # Reset msgs status if possible
+                    try: await safe_edit(status_msgs, f"🕒 Auto-proses `{title}` dijeda demi perintah manual...")
                     except: pass
-                    
-                    # 30-minute rest after successful auto-upload
-                    logger.info("💤 Resting for 30 minutes after successful auto-upload...")
-                    for _ in range(30 * 60):
-                        if not BotState.is_auto_running:
-                            break
-                        await asyncio.sleep(1)
-                else:
-                    db.mark_failed(book_id, title)
-                    logger.error(f"❌ Failed to process {title} ({book_id})")
-                    try:
-                        await safe_edit(status_msgs, f"❌ Gagal memproses: **{title}** ({book_id})")
-                    except: pass
+                    BotState.active_tasks -= 1
+                    BotState.current_auto_process = None
+                    # Do NOT mark as processed so it retries later
+                    break # Exit current batch to handle manual
+                except Exception as e:
+                    logger.error(f"Error processing {book_id} in auto: {e}")
+                finally:
+                    BotState.active_tasks -= 1
+                    BotState.current_auto_process = None
                 
                 await asyncio.sleep(10)
             
@@ -539,8 +597,25 @@ async def auto_mode_loop():
             logger.error(f"⚠️ Error in auto_mode_loop: {e}")
             await asyncio.sleep(60)
 
-if __name__ == '__main__':
+async def main():
     logger.info("Initializing FlickReels Auto-Bot...")
+    # Send startup message to admins
+    startup_text = (
+        "Welcome to FlickReels Downloader Bot! 🎉\n\n"
+        "Gunakan:\n"
+        "- `/flickreels download {ID}` untuk download drama.\n"
+        "- `/flickreels cari {judul}` untuk mencari drama.\n"
+        "- `/flickreels status` untuk cek proses.\n"
+        "- `/flickreels panel` untuk kontrol."
+    )
+    
+    for admin in ADMIN_IDS:
+        try: await client.send_message(admin, startup_text)
+        except Exception as e: logger.error(f"Failed to send startup to {admin}: {e}")
+
     client.loop.create_task(auto_mode_loop())
     logger.info("Bot is active and monitoring FlickReels API.")
-    client.run_until_disconnected()
+    await client.run_until_disconnected()
+
+if __name__ == '__main__':
+    client.loop.run_until_complete(main())

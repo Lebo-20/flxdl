@@ -1,5 +1,6 @@
 import httpx
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +92,85 @@ async def get_all_episodes(book_id: str, detail: dict = None):
         
     if detail:
         episodes = detail.get("list") or detail.get("episodes") or []
+        
         # Normalisasi: FlickReels uses 'chapter_num' instead of 'episode'
         for ep in episodes:
             if 'chapter_num' in ep and 'episode' not in ep:
                 ep['episode'] = ep['chapter_num']
+        
+        # Check if episodes are potentially truncated (usually /batchload returns 10-20)
+        # Fetch full list from /api/list if needed
+        is_all = detail.get("is_all", 0)
+        total_chapters = detail.get("total_chapters") or detail.get("chapters_total")
+        
+        if (len(episodes) <= 20 and is_all == 0) or (total_chapters and len(episodes) < int(total_chapters)):
+            logger.info(f"🔄 Episodes might be truncated ({len(episodes)}), fetching full list from /api/list...")
+            full_list = await fetch_all_from_list(book_id)
+            if full_list and len(full_list) > len(episodes):
+                logger.info(f"✅ Fetched {len(full_list)} episodes from full list.")
+                return full_list
+                
         return episodes
     return []
+
+async def fetch_all_from_list(book_id: str):
+    """
+    Fetches all episodes by iterating through pages in /api/list
+    """
+    all_episodes = []
+    page = 1
+    page_size = 20
+    
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=API_HEADERS) as client:
+        while True:
+            params = {
+                "id": book_id,
+                "lang": LANG,
+                "page": page,
+                "page_size": page_size
+            }
+            try:
+                response = await client.get(f"{BASE_URL}/api/list", params=params)
+                if response.status_code != 200:
+                    break
+                    
+                data = response.json()
+                if data.get("ret") != 200:
+                    break
+                    
+                payload = data.get("data", {})
+                items = []
+                if isinstance(payload, list):
+                    items = payload
+                elif isinstance(payload, dict):
+                    items = payload.get("list") or payload.get("data") or []
+                
+                if not items:
+                    break
+                    
+                # Normalisasi
+                for ep in items:
+                    if 'chapter_num' in ep and 'episode' not in ep:
+                        ep['episode'] = ep['chapter_num']
+                        
+                all_episodes.extend(items)
+                
+                # Check if we should continue
+                is_all = 0
+                if isinstance(payload, dict):
+                    is_all = payload.get("is_all", 0)
+                
+                if len(items) < page_size or is_all == 1:
+                    break
+                    
+                page += 1
+                if page > 50: # Safeguard
+                    break
+            except Exception as e:
+                logger.error(f"Error in fetch_all_from_list page {page}: {e}")
+                break
+                
+    return all_episodes
 
 async def get_latest_dramas(pages=1, page_size=20):
     """
