@@ -185,7 +185,16 @@ def get_panel_buttons():
     status_text = "🟢 RUNNING" if BotState.is_auto_running else "🔴 STOPPED"
     return [
         [Button.inline("▶️ Start Auto", b"start_auto"), Button.inline("⏹ Stop Auto", b"stop_auto")],
-        [Button.inline(f"📊 Status: {status_text}", b"status")]
+        [Button.inline(f"📊 Mode Auto: {status_text}", b"status")],
+        [Button.inline("🔙 Kembali ke Menu", b"cmd_main")]
+    ]
+
+def get_main_buttons():
+    return [
+        [Button.inline("🔍 Cari Drama", b"cmd_search"), Button.inline("📥 Download ID", b"cmd_download")],
+        [Button.inline("📊 Status Bot", b"cmd_status"), Button.inline("📜 List Terbaru", b"cmd_list")],
+        [Button.inline("👥 Daftar Admin", b"cmd_admin_list"), Button.inline("🎛 Control Panel", b"cmd_panel")],
+        [Button.inline("🔄 Update Sistem", b"cmd_update")]
     ]
 
 @client.on(events.NewMessage(pattern='/flickreels update'))
@@ -244,6 +253,22 @@ async def panel_callback(event):
         elif data == b"active_tasks":
             await event.answer(f"Active Tasks: {BotState.active_tasks}")
             await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
+        elif data == b"cmd_main":
+            await event.edit("🎬 **FlickReels Menu Utama**", buttons=get_main_buttons())
+        elif data == b"cmd_search":
+            await event.answer("Gunakan perintah: /flickreels cari {judul}", alert=True)
+        elif data == b"cmd_download":
+            await event.answer("Gunakan perintah: /flickreels download {ID}", alert=True)
+        elif data == b"cmd_status":
+            await on_status_cmd(event)
+        elif data == b"cmd_list":
+            await on_list(event)
+        elif data == b"cmd_admin_list":
+            await on_admin_list(event)
+        elif data == b"cmd_panel":
+            await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
+        elif data == b"cmd_update":
+            await update_bot(event)
     except Exception as e:
         if "message is not modified" in str(e).lower() or "Message string and reply markup" in str(e):
             pass 
@@ -335,15 +360,13 @@ async def on_status_cmd(event):
 @client.on(events.NewMessage(pattern='/flickreels start'))
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
+    if event.sender_id not in get_active_admins():
+        return
     text = (
-        "Welcome to FlickReels Downloader Bot! 🎉\n\n"
-        "Gunakan:\n"
-        "- `/flickreels download {ID}` untuk download drama.\n"
-        "- `/flickreels cari {judul}` untuk mencari drama.\n"
-        "- `/flickreels status` untuk cek proses.\n"
-        "- `/flickreels panel` untuk kontrol."
+        "🎬 **FlickReels Downloader Bot**\n\n"
+        "Silakan pilih perintah di bawah ini:"
     )
-    await event.reply(text)
+    await event.reply(text, buttons=get_main_buttons())
 
 @client.on(events.NewMessage(pattern=r'/flickreels list'))
 async def on_list(event):
@@ -690,24 +713,11 @@ async def auto_mode_loop():
 async def main():
     logger.info("Initializing FlickReels Auto-Bot...")
     # 7. Notify all admins about startup
-    startup_text = (
-        "🎬 **FlickReels Bot Aktif!**\n\n"
-        "📋 **Perintah Admin:**\n"
-        "• `/flickreels cari {judul}` — Cari drama by judul\n"
-        "• `/flickreels download {ID}` — Download drama by ID\n"
-        "• `/flickreels status` — Cek status sistem\n"
-        "• `/flickreels panel` — Control panel\n"
-        "• `/flickreels update` — Update bot via git\n\n"
-        "👥 **Manajemen Admin:**\n"
-        "• `/admin add {ID}` — Tambah admin baru\n"
-        "• `/admin hapus {ID}` — Hapus admin\n"
-        "• `/admin list` — Lihat daftar admin\n\n"
-        "⚡ *Manual Command selalu diutamakan!*"
-    )
+    startup_text = "🎬 **FlickReels Bot Aktif!**\n\nSilakan pilih menu di bawah ini:"
     
     for admin in get_active_admins():
         try:
-            await client.send_message(admin, startup_text)
+            await client.send_message(admin, startup_text, buttons=get_main_buttons())
         except Exception as e:
             logger.error(f"Failed to send startup to {admin}: {e}")
 
