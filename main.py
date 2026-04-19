@@ -23,14 +23,19 @@ from uploader import upload_drama
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-# Handle multiple admins if provided in ADMIN_ID env (e.g. "ID1,ID2")
-ADMIN_VAL = os.environ.get("ADMIN_ID", "0")
-if "," in ADMIN_VAL:
-    ADMIN_IDS = [int(x.strip()) for x in ADMIN_VAL.split(",") if x.strip()]
-else:
-    ADMIN_IDS = [int(ADMIN_VAL)]
+# Super Admins from .env
+_ADMIN_VAL = os.environ.get("ADMIN_ID", "0")
+SUPER_ADMIN_IDS = [int(x.strip()) for x in _ADMIN_VAL.split(",") if x.strip()]
 
-ADMIN_ID = ADMIN_IDS[0] # Primary admin for fallbacks
+def get_active_admins():
+    """Returns combined list of Super Admins and DB Admins."""
+    try:
+        db_admins = db.get_admins()
+        return list(set(SUPER_ADMIN_IDS + db_admins))
+    except:
+        return SUPER_ADMIN_IDS
+
+ADMIN_ID = SUPER_ADMIN_IDS[0] # Primary admin for fallbacks
 AUTO_CHANNEL = int(os.environ.get("AUTO_CHANNEL", ADMIN_ID)) # Default post to admin
 AUTO_THREAD_ID = int(os.environ.get("AUTO_THREAD_ID", "0")) or None # Topic ID for the group
 # Database Configuration
@@ -47,15 +52,21 @@ class Database:
     def create_tables(self):
         conn = self.get_conn()
         cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS processed_dramas (
-                book_id TEXT PRIMARY KEY,
-                title TEXT,
-                status TEXT, -- 'success', 'failed'
-                attempts INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS processed_dramas (
+                    book_id TEXT PRIMARY KEY,
+                    title TEXT,
+                    status TEXT, -- 'success', 'failed'
+                    attempts INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS admins (
+                    user_id BIGINT PRIMARY KEY,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
         conn.commit()
         cursor.close()
         conn.close()
@@ -108,6 +119,31 @@ class Database:
         cursor.close()
         conn.close()
 
+    def get_admins(self):
+        conn = self.get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM admins")
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [row[0] for row in rows]
+
+    def add_admin(self, user_id):
+        conn = self.get_conn()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO admins (user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    def remove_admin(self, user_id):
+        conn = self.get_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM admins WHERE user_id = %s", (user_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
 db = Database(DATABASE_URL)
 
 # Initialize logging
@@ -154,7 +190,7 @@ def get_panel_buttons():
 
 @client.on(events.NewMessage(pattern='/flickreels update'))
 async def update_bot(event):
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         return
     import subprocess
     import sys
@@ -182,13 +218,13 @@ async def update_bot(event):
 
 @client.on(events.NewMessage(pattern='/flickreels panel'))
 async def panel(event):
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         return
     await event.reply("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
 
 @client.on(events.CallbackQuery())
 async def panel_callback(event):
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         return
         
     data = event.data
@@ -214,9 +250,28 @@ async def panel_callback(event):
         else:
             logger.error(f"Callback error: {e}")
 
+@client.on(events.NewMessage(pattern=r'/admin add (\d+)'))
+async def on_admin_add(event):
+    if event.sender_id not in get_active_admins():
+        return
+    new_admin = int(event.pattern_match.group(1))
+    db.add_admin(new_admin)
+    await event.reply(f"✅ User `{new_admin}` berhasil ditambahkan sebagai admin.")
+
+@client.on(events.NewMessage(pattern=r'/admin hapus (\d+)'))
+async def on_admin_del(event):
+    if event.sender_id not in get_active_admins():
+        return
+    target_admin = int(event.pattern_match.group(1))
+    if target_admin in SUPER_ADMIN_IDS:
+        await event.reply(f"❌ User `{target_admin}` adalah Super Admin dan tidak bisa dihapus.")
+        return
+    db.remove_admin(target_admin)
+    await event.reply(f"✅ User `{target_admin}` berhasil dihapus dari daftar admin.")
+
 @client.on(events.NewMessage(pattern='/flickreels status'))
 async def on_status_cmd(event):
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         return
     
     # Get database count
@@ -257,7 +312,7 @@ async def start(event):
 
 @client.on(events.NewMessage(pattern=r'/flickreels list'))
 async def on_list(event):
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         return
         
     status_msg = await event.reply("🔍 Mengambil daftar drama terbaru dari API...")
@@ -282,7 +337,7 @@ async def on_list(event):
 
 @client.on(events.NewMessage(pattern=r'/flickreels cari (.+)'))
 async def on_search(event):
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         return
         
     chat_id = event.chat_id
@@ -321,7 +376,7 @@ async def on_search(event):
 @client.on(events.NewMessage(pattern=r'/flickreels download (\d+)'))
 async def on_download(event):
     # Check admin by sender_id (allows command in groups)
-    if event.sender_id not in ADMIN_IDS:
+    if event.sender_id not in get_active_admins():
         await event.reply("❌ Maaf, perintah ini hanya untuk admin.")
         return
         
@@ -533,7 +588,7 @@ async def auto_mode_loop():
                 
                 try:
                     status_msgs = []
-                    for admin in ADMIN_IDS:
+                    for admin in get_active_admins():
                         m = await client.send_message(admin, f"🆕 **FlickReels Detection!**\n🎬 `{title}`\n🆔 `{book_id}`\n⏳ Processing...")
                         status_msgs.append(m)
                 except: 
@@ -599,19 +654,26 @@ async def auto_mode_loop():
 
 async def main():
     logger.info("Initializing FlickReels Auto-Bot...")
-    # Send startup message to admins
+    # 7. Notify all admins about startup
     startup_text = (
-        "Welcome to FlickReels Downloader Bot! 🎉\n\n"
-        "Gunakan:\n"
-        "- `/flickreels download {ID}` untuk download drama.\n"
-        "- `/flickreels cari {judul}` untuk mencari drama.\n"
-        "- `/flickreels status` untuk cek proses.\n"
-        "- `/flickreels panel` untuk kontrol."
+        "🎬 **FlickReels Bot Aktif!**\n\n"
+        "📋 **Perintah Admin:**\n"
+        "• `/flickreels cari {judul}` — Cari drama by judul\n"
+        "• `/flickreels download {ID}` — Download drama by ID\n"
+        "• `/flickreels status` — Cek status sistem\n"
+        "• `/flickreels panel` — Control panel\n"
+        "• `/flickreels update` — Update bot via git\n\n"
+        "👥 **Manajemen Admin:**\n"
+        "• `/admin add {ID}` — Tambah admin baru\n"
+        "• `/admin hapus {ID}` — Hapus admin\n\n"
+        "⚡ *Manual Command selalu diutamakan!*"
     )
     
-    for admin in ADMIN_IDS:
-        try: await client.send_message(admin, startup_text)
-        except Exception as e: logger.error(f"Failed to send startup to {admin}: {e}")
+    for admin in get_active_admins():
+        try:
+            await client.send_message(admin, startup_text)
+        except Exception as e:
+            logger.error(f"Failed to send startup to {admin}: {e}")
 
     client.loop.create_task(auto_mode_loop())
     logger.info("Bot is active and monitoring FlickReels API.")
