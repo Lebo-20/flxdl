@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import random
 import psycopg2
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events, Button, types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -256,9 +256,11 @@ async def panel_callback(event):
         elif data == b"cmd_main":
             await event.edit("🎬 **FlickReels Menu Utama**", buttons=get_main_buttons())
         elif data == b"cmd_search":
-            await event.answer("Gunakan perintah: /flickreels cari {judul}", alert=True)
+            await event.delete()
+            await client.send_message(event.chat_id, "🔍 Silakan balas pesan ini dengan **Judul Drama** yang dicari:", reply_markup=types.ForceReply())
         elif data == b"cmd_download":
-            await event.answer("Gunakan perintah: /flickreels download {ID}", alert=True)
+            await event.delete()
+            await client.send_message(event.chat_id, "📥 Silakan balas pesan ini dengan **ID Drama** yang ingin didownload:", reply_markup=types.ForceReply())
         elif data == b"cmd_status":
             await on_status_cmd(event)
         elif data == b"cmd_list":
@@ -474,6 +476,24 @@ async def on_download(event):
     finally:
         BotState.active_tasks -= 1
         BotState.manual_active_tasks -= 1
+
+@client.on(events.NewMessage)
+async def on_reply_handler(event):
+    if not event.reply_to_msg_id or event.sender_id not in get_active_admins():
+        return
+        
+    replied_msg = await event.get_reply_message()
+    if not replied_msg or not replied_msg.out:
+        return
+        
+    if "Judul Drama" in replied_msg.text:
+        # Pseudo search pattern match
+        event.pattern_match = type('Match', (object,), {'group': lambda i: event.text})
+        await on_search(event)
+    elif "ID Drama" in replied_msg.text:
+        # Pseudo download pattern match
+        event.pattern_match = type('Match', (object,), {'group': lambda i: event.text})
+        await on_download(event)
 
 async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thread_id=None):
     """Downloads, merges, and uploads a drama. Returns (success, success_count, total_count)"""
