@@ -52,21 +52,21 @@ class Database:
     def create_tables(self):
         conn = self.get_conn()
         cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS processed_dramas (
-                    book_id TEXT PRIMARY KEY,
-                    title TEXT,
-                    status TEXT, -- 'success', 'failed'
-                    attempts INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS admins (
-                    user_id BIGINT PRIMARY KEY,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS processed_dramas (
+                book_id TEXT PRIMARY KEY,
+                title TEXT,
+                status TEXT, -- 'success', 'failed'
+                attempts INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id BIGINT PRIMARY KEY,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         conn.commit()
         cursor.close()
         conn.close()
