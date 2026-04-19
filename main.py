@@ -236,24 +236,21 @@ async def panel_callback(event):
     if event.sender_id not in get_active_admins():
         return
         
+    # ⚡ JAWAB SECEPAT MUNGKIN (Hanya satu kali)
+    try: await event.answer()
+    except: pass
+    
     data = event.data
-    
-    # Segera hilangkan loading spinner di Telegram
-    if data not in [b"start_auto", b"stop_auto", b"status", b"active_tasks"]:
-        try: await event.answer()
-        except: pass
-    
     try:
         if data == b"start_auto":
             BotState.is_auto_running = True
-            await event.answer("Auto-mode started!")
             await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
         elif data == b"stop_auto":
             BotState.is_auto_running = False
-            await event.answer("Auto-mode stopped!")
             await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
         elif data == b"status":
-            await event.answer(f"Status: {'Running' if BotState.is_auto_running else 'Stopped'}")
+            status_text = "🟢 RUNNING" if BotState.is_auto_running else "🔴 STOPPED"
+            await event.answer(f"Mode Auto: {status_text}", alert=True)
             await event.edit("🎛 **FlickReels Control Panel**", buttons=get_panel_buttons())
         elif data == b"active_tasks":
             await event.answer(f"Active Tasks: {BotState.active_tasks}")
