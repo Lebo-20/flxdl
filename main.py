@@ -75,12 +75,12 @@ class Database:
         conn = self.get_conn()
         cursor = conn.cursor()
         # Check by book_id
-        cursor.execute("SELECT status, attempts FROM processed_dramas WHERE book_id = %s", (str(book_id),))
+        cursor.execute("SELECT status, attempts, created_at FROM processed_dramas WHERE book_id = %s", (str(book_id),))
         row = cursor.fetchone()
         
-        # Also check by title if provided (as requested by user to store/check titles)
+        # Also check by title if provided
         if not row and title:
-            cursor.execute("SELECT status, attempts FROM processed_dramas WHERE title = %s AND status = 'success'", (title,))
+            cursor.execute("SELECT status, attempts, created_at FROM processed_dramas WHERE title = %s AND status = 'success'", (title,))
             row = cursor.fetchone()
             
         cursor.close()
@@ -89,19 +89,28 @@ class Database:
         if not row:
             return False
             
-        status, attempts = row
-        # Skip if success OR if failed after 2 attempts
-        if status == 'success' or attempts >= 2:
+        status, attempts, created_at = row
+        if status == 'success':
             return True
+            
+        # If failed, check if it was less than 24 hours ago
+        from datetime import datetime, timezone
+        now = datetime.now(created_at.tzinfo) if created_at.tzinfo else datetime.now()
+        if (now - created_at).total_seconds() < 24 * 3600:
+            return True # Skip if failed within 24 hours
+            
         return False
         
     def mark_success(self, book_id, title):
         conn = self.get_conn()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO processed_dramas (book_id, title, status, attempts) 
-            VALUES (%s, %s, 'success', 1)
-            ON CONFLICT(book_id) DO UPDATE SET status = 'success', attempts = processed_dramas.attempts + 1
+            INSERT INTO processed_dramas (book_id, title, status, attempts, created_at) 
+            VALUES (%s, %s, 'success', 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(book_id) DO UPDATE SET 
+                status = 'success', 
+                attempts = processed_dramas.attempts + 1,
+                created_at = CURRENT_TIMESTAMP
         """, (str(book_id), title))
         conn.commit()
         cursor.close()
@@ -111,9 +120,12 @@ class Database:
         conn = self.get_conn()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO processed_dramas (book_id, title, status, attempts) 
-            VALUES (%s, %s, 'failed', 1)
-            ON CONFLICT(book_id) DO UPDATE SET attempts = processed_dramas.attempts + 1
+            INSERT INTO processed_dramas (book_id, title, status, attempts, created_at) 
+            VALUES (%s, %s, 'failed', 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(book_id) DO UPDATE SET 
+                status = 'failed', 
+                attempts = processed_dramas.attempts + 1,
+                created_at = CURRENT_TIMESTAMP
         """, (str(book_id), title))
         conn.commit()
         cursor.close()
@@ -674,6 +686,12 @@ async def auto_mode_loop():
                     
                 new_found += 1
                 title = drama.get("title") or drama.get("bookName") or drama.get("name") or "Unknown"
+                
+                # Double check before starting
+                if db.is_processed(book_id, title=title):
+                    logger.info(f"⏩ Skipping {title} ({book_id}) as it was already processed.")
+                    continue
+                    
                 logger.info(f"✨ New FlickReels drama: {title} ({book_id}). Starting process...")
                 
                 try:
@@ -697,12 +715,12 @@ async def auto_mode_loop():
                         db.mark_success(book_id, title)
                         logger.info(f"✅ Finished {title}")
                         try:
-                            await safe_edit(status_msgs, f"✅ Sukses Auto-Post: **{title}**\n\n💤 Bot istirahat 30 menit (Auto-Mode).")
+                            await safe_edit(status_msgs, f"✅ Sukses Auto-Post: **{title}**\n\n💤 Bot istirahat 2 jam (Auto-Mode).")
                         except: pass
                         
-                        # 30-minute rest after successful auto-upload
-                        logger.info("💤 Resting for 30 minutes after successful auto-upload...")
-                        for _ in range(30 * 60):
+                        # 2-hour rest after successful auto-upload
+                        logger.info("💤 Resting for 2 hours after successful auto-upload...")
+                        for _ in range(120 * 60):
                             if not BotState.is_auto_running or BotState.manual_active_tasks > 0:
                                 break
                             await asyncio.sleep(1)
