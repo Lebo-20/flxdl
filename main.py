@@ -52,11 +52,12 @@ class Database:
     def create_tables(self):
         conn = self.get_conn()
         cursor = conn.cursor()
+        # Create tables if not exist
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS processed_dramas (
                 book_id TEXT PRIMARY KEY,
                 title TEXT,
-                status TEXT, -- 'success', 'failed'
+                status TEXT,
                 attempts INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -67,6 +68,15 @@ class Database:
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # --- AUTO MIGRATION ---
+        # Add 'status' column if it doesn't exist (for older DB versions)
+        try:
+            cursor.execute("ALTER TABLE processed_dramas ADD COLUMN IF NOT EXISTS status TEXT")
+            cursor.execute("ALTER TABLE processed_dramas ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0")
+        except Exception as e:
+            logger.info(f"Migration notice: {e}")
+            
         conn.commit()
         cursor.close()
         conn.close()
@@ -715,12 +725,12 @@ async def auto_mode_loop():
                         db.mark_success(book_id, title)
                         logger.info(f"✅ Finished {title}")
                         try:
-                            await safe_edit(status_msgs, f"✅ Sukses Auto-Post: **{title}**\n\n💤 Bot istirahat 2 jam (Auto-Mode).")
+                            await safe_edit(status_msgs, f"✅ Sukses Auto-Post: **{title}**\n\n💤 Bot istirahat 1 jam (Auto-Mode).")
                         except: pass
                         
-                        # 2-hour rest after successful auto-upload
-                        logger.info("💤 Resting for 2 hours after successful auto-upload...")
-                        for _ in range(120 * 60):
+                        # 1-hour rest after successful auto-upload
+                        logger.info("💤 Resting for 1 hour after successful auto-upload...")
+                        for _ in range(60 * 60):
                             if not BotState.is_auto_running or BotState.manual_active_tasks > 0:
                                 break
                             await asyncio.sleep(1)
