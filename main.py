@@ -70,27 +70,41 @@ class Database:
         ''')
         
         # --- AUTO MIGRATION ---
-        # Add 'status' column if it doesn't exist (for older DB versions)
+        # 1. Pastikan kolom 'book_id' ada (untuk kompatibilitas versi sangat lama)
+        try:
+            cursor.execute("ALTER TABLE processed_dramas ADD COLUMN IF NOT EXISTS book_id TEXT")
+            # Jika book_id baru saja ditambahkan dan PRIMARY KEY kosong, ini mungkin perlu penanganan manual, 
+            # tapi untuk sebagian besar kasus ini akan memperbaiki error "column not found".
+        except: pass
+
+        # 2. Pastikan kolom lainnya ada
         try:
             cursor.execute("ALTER TABLE processed_dramas ADD COLUMN IF NOT EXISTS status TEXT")
             cursor.execute("ALTER TABLE processed_dramas ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE processed_dramas ADD COLUMN IF NOT EXISTS title TEXT")
         except Exception as e:
             logger.info(f"Migration notice: {e}")
             
         conn.commit()
         cursor.close()
         conn.close()
+        logger.info("✅ Database migration/check completed.")
         
     def is_processed(self, book_id, title=None):
         conn = self.get_conn()
         cursor = conn.cursor()
+        
         # Check by book_id
-        cursor.execute("SELECT status, attempts, created_at FROM processed_dramas WHERE book_id = %s", (str(book_id),))
+        query1 = "SELECT status, attempts, created_at FROM processed_dramas WHERE book_id = %s"
+        logger.debug(f"🔍 Database Query: {query1} | Args: ({book_id})")
+        cursor.execute(query1, (str(book_id),))
         row = cursor.fetchone()
         
         # Also check by title if provided
         if not row and title:
-            cursor.execute("SELECT status, attempts, created_at FROM processed_dramas WHERE title = %s AND status = 'success'", (title,))
+            query2 = "SELECT status, attempts, created_at FROM processed_dramas WHERE title = %s AND status = 'success'"
+            logger.debug(f"🔍 Database Query: {query2} | Args: ({title})")
+            cursor.execute(query2, (title,))
             row = cursor.fetchone()
             
         cursor.close()
@@ -114,14 +128,16 @@ class Database:
     def mark_success(self, book_id, title):
         conn = self.get_conn()
         cursor = conn.cursor()
-        cursor.execute("""
+        query = """
             INSERT INTO processed_dramas (book_id, title, status, attempts, created_at) 
             VALUES (%s, %s, 'success', 1, CURRENT_TIMESTAMP)
             ON CONFLICT(book_id) DO UPDATE SET 
                 status = 'success', 
                 attempts = processed_dramas.attempts + 1,
                 created_at = CURRENT_TIMESTAMP
-        """, (str(book_id), title))
+        """
+        logger.debug(f"💾 Database Write: mark_success | ID: {book_id}")
+        cursor.execute(query, (str(book_id), title))
         conn.commit()
         cursor.close()
         conn.close()
