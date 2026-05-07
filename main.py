@@ -182,11 +182,11 @@ class Database:
         cursor.close()
         conn.close()
 
-db = Database(DATABASE_URL)
-
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+db = Database(DATABASE_URL)
 
 # Initialize Bot State
 class BotState:
