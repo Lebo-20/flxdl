@@ -27,7 +27,8 @@ async def dump_episodes(book_id):
             is_ims = "hls-ims" in url if url else False
             result.append({"num": num, "url": url, "is_ims": is_ims})
             
-        print(json.dumps(result[:20], indent=2))
+        for i, ep in enumerate(result):
+            print(f"Ep {ep['num']}: IMS={ep['is_ims']} URL={'Yes' if ep['url'] else 'No'}")
 
 if __name__ == "__main__":
-    asyncio.run(dump_episodes("6463"))
+    asyncio.run(dump_episodes("3655"))

@@ -4,6 +4,7 @@ import logging
 import shutil
 import tempfile
 import random
+import re
 import psycopg2
 from telethon import TelegramClient, events, Button, types
 from dotenv import load_dotenv
@@ -511,6 +512,7 @@ async def on_download(event):
             return
         
         title = detail.get("title") or detail.get("bookName") or detail.get("name") or f"Drama_{book_id}"
+        title = re.sub(r'\s+(Episode|Eps|Ep)\s+\d+$', '', title, flags=re.IGNORECASE).strip()
         
         status_msg = await event.reply(f"🎬 Drama: **{title}**\n📽 Total Episodes: {len(episodes)}\n\n⏳ Sedang mendownload dan memproses...")
         
@@ -563,6 +565,7 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
 
     # Use title from argument if provided, otherwise fallback to detail metadata
     title = title or detail.get("title") or detail.get("bookName") or detail.get("name") or f"Drama_{book_id}"
+    title = re.sub(r'\s+(Episode|Eps|Ep)\s+\d+$', '', title, flags=re.IGNORECASE).strip()
     description = detail.get("intro") or detail.get("introduction") or detail.get("description") or "No description available."
     poster = detail.get("cover") or detail.get("coverWap") or detail.get("poster") or ""
     
@@ -575,22 +578,38 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
         if status_msg: await safe_edit(status_msg, f"🎬 Processing **{title}**...")
         
         # 3. Download (pass book_id so downloader can refresh URLs on 403)
-        # Returns success, but we want status
+        # Returns a dict with status and errors
         download_res = await download_all_episodes(episodes, video_dir, book_id=book_id, status_msg=status_msg, title=title)
         
-        # We need to know how many succeeded for the final message
-        success_count = len([f for f in os.listdir(video_dir) if f.endswith(".mp4")])
-        total_available = len(episodes) # simplification
+        success_count = download_res.get('success_count', 0)
+        total_available = download_res.get('total_count', 0)
+        errors = download_res.get('errors', [])
         
-        if not download_res or success_count == 0:
-            if status_msg: await safe_edit(status_msg, "❌ Download Gagal atau tidak ada episode yang bisa diunduh.")
-            return False, 0, total_available
+        if not download_res.get('success'):
+            # Build failure report
+            error_report = "\n".join(errors[:15])
+            if len(errors) > 15:
+                error_report += f"\n...dan {len(errors)-15} error lainnya."
+                
+            report_msg = (
+                f"❌ **Gagal Download Full: {title}**\n"
+                f"📽 Berhasil: {success_count}/{total_available}\n\n"
+                f"📋 **Laporan Kegagalan:**\n"
+                f"`{error_report or 'Tidak ada detail error.'}`\n\n"
+                f"⚠️ Upload dibatalkan karena file tidak lengkap."
+            )
+            
+            if status_msg:
+                await safe_edit(status_msg, report_msg)
+            
+            logger.warning(f"❌ Aborted upload for {title} - Not full ({success_count}/{total_available})")
+            return False, success_count, total_available
 
         # 4. Merge
         output_video_path = os.path.join(temp_dir, f"{title}.mp4")
         merge_success = await merge_episodes(video_dir, output_video_path)
         if not merge_success:
-            if status_msg: await safe_edit(status_msg, "❌ Merge Gagal.")
+            if status_msg: await safe_edit(status_msg, f"❌ Merge Gagal untuk **{title}**.")
             return False, success_count, total_available
 
         # 5. Upload
@@ -607,7 +626,7 @@ async def process_drama_full(book_id, chat_id, status_msg=None, title=None, thre
             await safe_edit(status_msg, msg_text)
             return True, success_count, total_available
         else:
-            if status_msg: await safe_edit(status_msg, "❌ Upload Gagal.")
+            if status_msg: await safe_edit(status_msg, f"❌ Upload Gagal untuk **{title}**.")
             return False, success_count, total_available
             
     except Exception as e:
@@ -676,10 +695,11 @@ async def auto_mode_loop():
             
             for d in raw_queue:
                 bid = str(d.get("playlet_id") or d.get("bookId") or d.get("id") or d.get("bookid", ""))
-                title = d.get("title") or d.get("bookName") or d.get("name")
-                if bid and not db.is_processed(bid, title=title) and bid not in seen_ids_in_batch:
+                if bid and bid not in seen_ids_in_batch:
                     new_queue.append(d)
                     seen_ids_in_batch.add(bid)
+
+            logger.info(f"📊 New Queue: {len(new_queue)} dramas ready to process (Sources: {len(api1_new)}, {len(api2_new)}, {len(api3_new)})")
             
             if not new_queue and not is_initial_run:
                 # Fallback: Search for some generic keywords to find new content
@@ -712,6 +732,7 @@ async def auto_mode_loop():
                     
                 new_found += 1
                 title = drama.get("title") or drama.get("bookName") or drama.get("name") or "Unknown"
+                title = re.sub(r'\s+(Episode|Eps|Ep)\s+\d+$', '', title, flags=re.IGNORECASE).strip()
                 
                 # Double check before starting
                 if db.is_processed(book_id, title=title):
