@@ -138,6 +138,7 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
             "ffmpeg", "-y",
             "-user_agent", BROWSER_HEADERS["User-Agent"],
             "-headers", headers_str,
+            "-reconnect", "1", "-reconnect_at_eof", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
             "-i", url,
             "-c", "copy", "-bsf:a", "aac_adtstoasc",
             path,
