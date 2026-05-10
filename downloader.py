@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 # ─── Browser-like Headers ───────────────────────────────────────────
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Referer": "https://farsunpteltd.com/",
     "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive",
@@ -17,6 +16,7 @@ BROWSER_HEADERS = {
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "cross-site",
 }
+
 
 # ─── API config ─────────────────────────────────────────────────────
 API_BASE = "https://flickreels.dramabos.my.id"
@@ -130,10 +130,12 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
     is_hls = ".m3u8" in url.split("?")[0].lower()
 
     if is_hls:
-        # Simplify headers for ffmpeg on Windows
-        # Use only Referer in -headers since -user_agent is a separate flag
-        headers_str = f"Referer: {BROWSER_HEADERS['Referer']}\r\n"
-        
+        # headers_str for ffmpeg -headers
+        headers_str = ""
+        for k, v in BROWSER_HEADERS.items():
+            if k.lower() != "user-agent": # user-agent is separate flag
+                headers_str += f"{k}: {v}\r\n"
+
         cmd = [
             "ffmpeg", "-y",
             "-user_agent", BROWSER_HEADERS["User-Agent"],
@@ -143,6 +145,7 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
             "-c", "copy", "-bsf:a", "aac_adtstoasc",
             path,
         ]
+
         logger.debug(f"Running ffmpeg: {' '.join(cmd)}")
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -165,11 +168,11 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
         cmd = [
             "aria2c", "-x", "8", "-s", "8", "-j", "8",
             "--header", f"User-Agent: {BROWSER_HEADERS['User-Agent']}",
-            "--header", f"Referer: {BROWSER_HEADERS['Referer']}",
             "--header", f"Origin: {BROWSER_HEADERS['Origin']}",
             "--header", f"Sec-Fetch-Dest: {BROWSER_HEADERS['Sec-Fetch-Dest']}",
             "--header", f"Sec-Fetch-Mode: {BROWSER_HEADERS['Sec-Fetch-Mode']}",
             "--header", f"Sec-Fetch-Site: {BROWSER_HEADERS['Sec-Fetch-Site']}",
+
             "--console-log-level=error",
             "--summary-interval=0",
             "--allow-overwrite=true",
@@ -255,25 +258,38 @@ async def download_episode_smart(
         if not success:
             logger.warning(f"⚠️ Ep {ep_num:03d} download failed, checking URL validity...")
             try:
+                # Check file size - if ffmpeg returned non-zero but file is actually okay
+                if os.path.exists(filepath) and os.path.getsize(filepath) > 1000000: # 1MB minimum
+                    logger.info(f"✅ Ep {ep_num:03d} file looks okay ({os.path.getsize(filepath)} bytes) despite FFmpeg return code.")
+                    return True, ""
+                
                 # Use a small GET request to check status
                 check_resp = await client.get(current_url, headers=BROWSER_HEADERS, timeout=10, follow_redirects=True)
+                
                 if check_resp.status_code == 403:
-                    logger.warning(f"🔒 403 Detected on ep {ep_num:03d} — refreshing URLs...")
-                    fresh_map = await fetch_fresh_urls(book_id, api_client)
-                    new_url = fresh_map.get(ep_num)
-                    if new_url and new_url != current_url:
-                        current_url = new_url
-                        logger.info(f"🔑 Got fresh URL for ep {ep_num:03d}")
-                        continue # Retry immediately with new URL
+                    body = check_resp.text.lower()
+                    if "accessdenied" in body or "signaturedoesnotmatch" in body:
+                         logger.warning(f"🔒 403 Detected on ep {ep_num:03d} — refreshing URLs...")
+                         fresh_map = await fetch_fresh_urls(book_id, api_client)
+                         new_url = fresh_map.get(ep_num)
+                         if new_url and new_url != current_url:
+                             current_url = new_url
+                             logger.info(f"🔑 Got fresh URL for ep {ep_num:03d}")
+                             continue # Retry immediately with new URL
+                         else:
+                             last_error = "403 Forbidden (No fresh URL)"
+                    elif "sorry, you have been blocked" in body:
+                         last_error = "Cloudflare Blocked httpx (URL might be okay)"
+                         logger.warning(f"🛑 Cloudflare blocked httpx check for ep {ep_num:03d}")
                     else:
-                        last_error = "403 Forbidden (No fresh URL)"
-                        logger.warning(f"⚠️ No new URL found for ep {ep_num:03d}")
+                         last_error = "403 Forbidden"
                 else:
                     last_error = f"HTTP {check_resp.status_code}"
                     logger.warning(f"URL check for ep {ep_num:03d} returned {check_resp.status_code}")
             except Exception as ce:
                 last_error = f"Check failed: {ce}"
                 logger.warning(f"Failed to check URL validity for ep {ep_num:03d}: {ce}")
+
 
         if attempt < retries:
             await asyncio.sleep(5 * attempt)
@@ -331,14 +347,19 @@ async def download_all_episodes(
                 if ep_num and url:
                     url_map[ep_num] = url
 
-        total_available = len(url_map)
+        # Identify target episodes
+        target_ep_nums = [int(ep.get("episode") or ep.get("chapter_num", 0)) for ep in episodes]
+        
+        # Filter url_map to only include target episodes
+        filtered_url_map = {n: u for n, u in url_map.items() if n in target_ep_nums}
+        
+        total_available = len(filtered_url_map)
         total_episodes = len(episodes)
         logger.info(f"📋 Downloadable: {total_available}/{total_episodes} episodes.")
 
         # Identify missing episodes (likely IMS)
-        for ep in episodes:
-            ep_num = int(ep.get("episode") or ep.get("chapter_num", 0))
-            if ep_num not in url_map:
+        for ep_num in target_ep_nums:
+            if ep_num not in filtered_url_map:
                 errors.append(f"Episode {ep_num:03d}: IMS URL / Tidak tersedia untuk diunduh")
 
         if total_available == 0:
@@ -353,6 +374,7 @@ async def download_all_episodes(
         # Step 2: Warm up CDN session
         try:
             logger.info("📡 Warming up CDN session...")
+            # We use a known working URL or just the domain root without referer
             await cdn_client.get("https://farsunpteltd.com/", timeout=10)
             logger.info("📡 CDN session ready")
         except Exception as e:
@@ -392,8 +414,9 @@ async def download_all_episodes(
                         errors.append(f"Episode {ep_num:03d}: {error_msg}")
                 return success
 
-        tasks = [limited_download(n, u) for n, u in sorted(url_map.items())]
+        tasks = [limited_download(n, u) for n, u in sorted(filtered_url_map.items())]
         results = await asyncio.gather(*tasks)
+
 
     success_count = sum(results)
     logger.info(f"📊 Download result: {success_count}/{total_episodes} episodes OK")
