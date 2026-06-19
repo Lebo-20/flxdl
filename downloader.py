@@ -127,7 +127,7 @@ async def download_single(client: httpx.AsyncClient, url: str, path: str) -> boo
     - .m3u8 → ffmpeg (HLS stream copy)
     - .mp4  → httpx streaming download with session cookies
     """
-    is_hls = ".m3u8" in url.split("?")[0].lower()
+    is_hls = ".m3u8" in url.split("?")[0].lower() or "hls" in url.split("?")[0].lower()
 
     if is_hls:
         # headers_str for ffmpeg -headers
