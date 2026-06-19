@@ -656,7 +656,7 @@ async def auto_mode_loop():
             continue
             
         try:
-            interval = 5 if is_initial_run else 15
+            interval = 5 if is_initial_run else 120
             # --- SOURCE 1: Home (/api/home) ---
             logger.info("🔍 Scanning Home (/api/home)...")
             home_dramas = await get_home_dramas() or []
