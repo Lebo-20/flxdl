@@ -19,7 +19,7 @@ BROWSER_HEADERS = {
 
 
 # ─── API config ─────────────────────────────────────────────────────
-API_BASE = "https://flickreels.dramabos.my.id"
+API_BASE = "https://flickreels.dramabos.online"
 AUTH_CODE = "A8D6AB170F7B89F2182561D3B32F390D"
 API_LANG = 6
 

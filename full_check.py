@@ -17,7 +17,7 @@ def load_processed():
 
 async def main():
     processed = load_processed()
-    BASE_URL = "https://flickreels.dramabos.my.id"
+    BASE_URL = "https://flickreels.dramabos.online"
     LANG = 6
     
     async with httpx.AsyncClient(timeout=30) as client:

@@ -5,7 +5,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 # FlickReels API Configuration
-BASE_URL = "https://flickreels.dramabos.my.id"
+BASE_URL = "https://flickreels.dramabos.online"
 AUTH_CODE = "A8D6AB170F7B89F2182561D3B32F390D"
 LANG = 6
 

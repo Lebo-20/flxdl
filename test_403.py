@@ -4,7 +4,7 @@ import asyncio
 async def test_headers():
     # URL for an episode of "Gerbong Muat" (ID 6802)
     # I'll get a fresh one from the API first
-    api_url = "https://flickreels.dramabos.my.id/batchload/6802?lang=6&code=A8D6AB170F7B89F2182561D3B32F390D"
+    api_url = "https://flickreels.dramabos.online/batchload/6802?lang=6&code=A8D6AB170F7B89F2182561D3B32F390D"
     
     async with httpx.AsyncClient() as client:
         resp = await client.get(api_url)
